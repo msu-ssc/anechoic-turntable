@@ -293,8 +293,8 @@ void MYPROG_main_loop()
 
 		if(parse_set_command(rxBuffer_command,&settimer1,&settimer2))
 		{
-			TIM1->CNT = 21600;
-			TIM2->CNT = 43200;
+			TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f)); // elevation
+			TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f)); // azimuth
 		}
 		//ftoa();
 		Azc = Azc;
