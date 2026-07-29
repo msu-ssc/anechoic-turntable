@@ -321,21 +321,30 @@ void MYPROG_main_loop()
 	if(command_read ==1)
 	{
 		//MYPROG_SendData("read command",10);
+    if(is_info_command(rxBuffer_command))
+    {
+      MYPROG_SendInfo();
+      command_read = 0;
+    }
+    else {
 
-		if(parse_mov_command(rxBuffer_command,&Azc,&Elc))
-		{
-			move = 1;
-			mode = 0;
+      if(parse_mov_command(rxBuffer_command,&Azc,&Elc))
+      {
+        move = 1;
+        mode = 0;
 
-		}else{
-			move = 0;
-		}
+      }else{
+        move = 0;
+      }
 
-		if(parse_set_command(rxBuffer_command,&settimer1,&settimer2))
-		{
-			TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f)); // elevation
-			TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f)); // azimuth
-		}
+      if(parse_set_command(rxBuffer_command,&settimer1,&settimer2))
+      {
+        TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f)); // elevation
+        TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f)); // azimuth
+      }
+    }
+
+
 		//ftoa();
 		Azc = Azc;
 		Elc = Elc;
