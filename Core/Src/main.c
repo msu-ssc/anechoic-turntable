@@ -130,25 +130,27 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
   if(buff != ';')
   {
-	  rxBuffer[buffn] = buff;
-  	  command_read =0;
-  	  buffn ++;
-  	  buff =0;
+      if (buffn < (sizeof(rxBuffer) - 1))
+      {
+          rxBuffer[buffn] = buff;
+          buffn++;
+          command_read = 0;
+      }
+      else
+      {
+          buffn = 0;
+          memset(rxBuffer, 0, sizeof(rxBuffer));
+          command_read = -1;
+      }
+      buff = 0;
   }else if(buff == ';')
-  {	  memcpy(rxBuffer_command,rxBuffer,buffn);
-	  command_read =1;
-	  buffn =0;
-	  memset(rxBuffer, 0, sizeof(rxBuffer));
-	  buff = 0;
-  }
-
-  if(buffn>64)
   {
-	  buffn=0;
-	  memset(rxBuffer, 0, sizeof(rxBuffer));
-	  command_read = -1;
-	  buff = 0;
-
+      memcpy(rxBuffer_command, rxBuffer, buffn);
+      rxBuffer_command[buffn] = '\0';
+      command_read = 1;
+      buffn = 0;
+      memset(rxBuffer, 0, sizeof(rxBuffer));
+      buff = 0;
   }
 
   }
@@ -161,18 +163,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
 // Function to parse the input string and extract two float values
 bool parse_mov_command(const char *input, float *x, float *y) {
-    // Buffer to hold the part of the string with the numbers
-    char coordinates[20];
     // Find the portion of the string after "CMD:MOV:"
     const char *start = strstr(input, "CMD:MOV:");
     if (start != NULL) {
         // Move the pointer past "CMD:MOV:"
         start += strlen("CMD:MOV:");
-        // Copy the coordinates (before the semicolon)
-        strncpy(coordinates, start, strlen(start) - 1);
-        coordinates[strlen(start) - 1] = '\0';  // Null-terminate the string
-        // Use sscanf to parse the two float numbers
-        if (sscanf(coordinates, "%f,%f", x, y) == 2) {
+        // The receiver strips the terminating semicolon before this call.
+        if (sscanf(start, "%f,%f", x, y) == 2) {
             return true;  // Parsing successful
         }
     }
@@ -180,18 +177,13 @@ bool parse_mov_command(const char *input, float *x, float *y) {
 }
 
 bool parse_set_command(const char *input, float *x, float *y) {
-    // Buffer to hold the part of the string with the numbers
-    char coordinates[20];
-    // Find the portion of the string after "CMD:MOV:"
+    // Find the portion of the string after "CMD:SET:"
     const char *start = strstr(input, "CMD:SET:");
     if (start != NULL) {
-        // Move the pointer past "CMD:MOV:"
+        // Move the pointer past "CMD:SET:"
         start += strlen("CMD:SET:");
-        // Copy the coordinates (before the semicolon)
-        strncpy(coordinates, start, strlen(start) - 1);
-        coordinates[strlen(start) - 1] = '\0';  // Null-terminate the string
-        // Use sscanf to parse the two float numbers
-        if (sscanf(coordinates, "%f,%f", x, y) == 2) {
+        // The receiver strips the terminating semicolon before this call.
+        if (sscanf(start, "%f,%f", x, y) == 2) {
             return true;  // Parsing successful
         }
     }
