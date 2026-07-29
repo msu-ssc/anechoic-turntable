@@ -59,6 +59,10 @@ void MYPROG_disable_az();
 void MYPROG_disable_el();
 
 //global vars
+
+// We will change the firmware version stuff later but for now we will just have it as a constant
+#define FIRMWARE_VERSION "1.0.0"
+
 int Az_pos;
 int El_pos;
 
@@ -188,6 +192,50 @@ bool parse_set_command(const char *input, float *x, float *y) {
         }
     }
     return false;  // Invalid format
+}
+
+bool is_info_command(const char *input)
+{
+  return strcmp(input, "CMD:INFO") == 0;
+}
+
+void MYPROG_SendInfo(void)
+{
+
+  char sendbuffer[160];
+  const char *mode_text = (mode == 0) ? "Automatic" : "Manual";
+  const char *movement_text = move ? "Moving" : "Idle";
+  const char *az_status = !move ? "Idle" : (move_az ? "Reached" : "Moving");
+  const char *el_status = !move ? "Idle" : (move_el ? "Reached" : "Moving");
+
+  MYPROG_SendData("\r\n---- CHAMBER MOTOR CONTROLLER ----\r\n", strlen("\r\n---- CHAMBER MOTOR CONTROLLER ----\r\n"));
+
+  snprintf(sendbuffer, sizeof(sendbuffer), "Firmware: %s\r\n", FIRMWARE_VERSION);
+  MYPROG_SendData(sendbuffer, strlen(sendbuffer));
+
+  snprintf(sendbuffer, sizeof(sendbuffer), "Mode: %s\r\n", mode_text);
+  MYPROG_SendData(sendbuffer, strlen(sendbuffer));
+
+  snprintf(sendbuffer, sizeof(sendbuffer), "Movement: %s\r\n", movement_text);
+  MYPROG_SendData(sendbuffer, strlen(sendbuffer));
+
+  snprintf(sendbuffer, sizeof(sendbuffer), "Azimuth: %.2f deg | Target: %.2f deg | Speed: %d | Encoder: %d\r\n",
+            Az_pos_deg, command_position_AZ, Az_speed, Az_pos);
+  MYPROG_SendData(sendbuffer, strlen(sendbuffer));
+
+  snprintf(sendbuffer, sizeof(sendbuffer), "Elevation: %.2f deg | Target: %.2f deg | Speed: %d | Encoder: %d\r\n",
+            El_pos_deg, command_position_EL, El_speed, El_pos);
+  MYPROG_SendData(sendbuffer, strlen(sendbuffer));
+
+  snprintf(sendbuffer, sizeof(sendbuffer), "Azimuth status: %s\r\n", az_status);
+  MYPROG_SendData(sendbuffer, strlen(sendbuffer));
+
+  snprintf(sendbuffer, sizeof(sendbuffer), "Elevation status: %s\r\n", el_status);
+  MYPROG_SendData(sendbuffer, strlen(sendbuffer));
+
+  MYPROG_SendData("===============================\r\n", strlen("===============================\r\n"));
+
+
 }
 
 /* USER CODE END PV */
