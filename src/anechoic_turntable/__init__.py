@@ -9,7 +9,7 @@ Typical use::
         turntable.move_to(pan=30, tilt=10)
 """
 
-from .controller import (
+from anechoic_turntable.controller import (
     ALLOWABLE_DISCREPANCY_DEG,
     CommandWrite,
     ControllerThread,
@@ -19,11 +19,15 @@ from .controller import (
     TurntableError,
     TurntableState,
 )
-from .messages import ReceivedMessage, ReceivedMessagePosition, parse_received_message
-from .positions import PanTilt, YawPitch
-from .regimes import TILT_REGIMES, TiltRegime
-from .serial_listener import SerialListener
-from .turntable import Turntable, find
+from anechoic_turntable.messages import (
+    ReceivedMessage,
+    ReceivedMessagePosition,
+    parse_received_message,
+)
+from anechoic_turntable.positions import PanTilt, YawPitch
+from anechoic_turntable.regimes import TILT_REGIMES, TiltRegime
+from anechoic_turntable.serial_listener import SerialListener
+from anechoic_turntable.turntable import Turntable, find
 
 __all__ = [
     "ALLOWABLE_DISCREPANCY_DEG",

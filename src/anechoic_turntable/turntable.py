@@ -9,7 +9,7 @@ from typing import Literal, overload
 
 import serial
 
-from .controller import (
+from anechoic_turntable.controller import (
     CommandWrite,
     ControllerThread,
     PositionSample,
@@ -17,9 +17,9 @@ from .controller import (
     TurntableError,
     TurntableState,
 )
-from .messages import ReceivedMessage, ReceivedMessagePosition
-from .positions import PanTilt
-from .serial_listener import SerialConnection, SerialListener
+from anechoic_turntable.messages import ReceivedMessage, ReceivedMessagePosition
+from anechoic_turntable.positions import PanTilt
+from anechoic_turntable.serial_listener import SerialConnection, SerialListener
 
 
 class Turntable:

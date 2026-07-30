@@ -7,7 +7,7 @@ import queue
 import threading
 from typing import Protocol
 
-from .messages import ReceivedMessage, parse_received_message
+from anechoic_turntable.messages import ReceivedMessage, parse_received_message
 
 
 class SerialConnection(Protocol):

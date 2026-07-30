@@ -9,6 +9,9 @@ dependencies = [
     "pyserial>=3.5",
 ]
 
+[project.scripts]
+anechoic-turntable = "anechoic_turntable.repl:main"
+
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"

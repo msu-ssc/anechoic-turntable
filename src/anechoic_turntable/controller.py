@@ -13,10 +13,10 @@ import time
 from collections import deque
 from typing import Literal, overload
 
-from .messages import ReceivedMessage, ReceivedMessagePosition
-from .positions import PanTilt, YawPitch
-from .regimes import TiltRegime, find_best_regime, find_next_regime
-from .serial_listener import SerialConnection
+from anechoic_turntable.messages import ReceivedMessage, ReceivedMessagePosition
+from anechoic_turntable.positions import PanTilt, YawPitch
+from anechoic_turntable.regimes import TiltRegime, find_best_regime, find_next_regime
+from anechoic_turntable.serial_listener import SerialConnection
 
 ALLOWABLE_DISCREPANCY_DEG = 0.11
 ABSOLUTE_PAN_BOUNDS = (-180.0, 180.0)

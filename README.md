@@ -10,6 +10,19 @@ anechoic chamber turntable:
 See the [controller guide](docs/controller.md) for the Python API and
 [firmware documentation](firmware/README.md) for firmware-specific information.
 
+## Interactive controller
+
+Start the minimal interactive controller with:
+
+```shell
+uv run anechoic-turntable
+```
+
+Type `help` at the prompt to see the supported commands. `connect` discovers the
+turntable on an available serial port. Azimuth maps to physical pan and
+elevation maps to physical tilt. Reconnecting, exiting, EOF, and Ctrl-C send the
+stop command before closing the serial connection.
+
 ## Development
 
 Create the development environment and run the checks with:
