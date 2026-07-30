@@ -28,6 +28,17 @@ turntable on an available serial port. Azimuth maps to physical pan and
 elevation maps to physical tilt. Reconnecting, exiting, EOF, and Ctrl-C send the
 stop command before closing the serial connection.
 
+For an auto-updating view of connection state, physical position, target, and
+controller activity, start the terminal UI with:
+
+```shell
+uv run anechoic-turntable-tui
+```
+
+The command field accepts the same `connect`, `info`, `set`, `mov`, `help`, and
+`exit` commands as the interactive controller. Serial-port discovery runs in
+the background so the display remains responsive.
+
 ## Development
 
 Create the development environment and run the checks with:

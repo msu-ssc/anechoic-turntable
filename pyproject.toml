@@ -7,11 +7,13 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.10.6",
     "pyserial>=3.5",
+    "textual>=1.0",
     "typing-extensions>=4.16.0",
 ]
 
 [project.scripts]
 anechoic-turntable = "anechoic_turntable.repl:main"
+anechoic-turntable-tui = "anechoic_turntable.tui:main"
 
 [build-system]
 requires = ["pdm-backend"]

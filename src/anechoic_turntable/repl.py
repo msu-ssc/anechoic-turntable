@@ -3,53 +3,25 @@
 from __future__ import annotations
 
 import cmd
-import re
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Literal
 from typing import TextIO
 
 from anechoic_turntable.controller import TurntableError
+from anechoic_turntable.session import CommandSyntaxError
+from anechoic_turntable.session import Coordinates
+from anechoic_turntable.session import NotConnectedError
+from anechoic_turntable.session import TurntableSession
+from anechoic_turntable.session import parse_coordinates
 from anechoic_turntable.turntable import Turntable
 
-_NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
-_COORDINATE = re.compile(rf"(?P<axis>az|el)=(?P<value>{_NUMBER})\Z")
-
-
-class CommandSyntaxError(ValueError):
-    """Raised when coordinate arguments are malformed."""
-
-
-@dataclass(frozen=True)
-class Coordinates:
-    """Physical azimuth and elevation parsed from command arguments."""
-
-    azimuth: float
-    elevation: float
-
-
-def parse_coordinates(arguments: str) -> Coordinates:
-    """Parse exactly one ``az=`` and one ``el=`` argument in either order."""
-
-    tokens = arguments.split()
-    if len(tokens) != 2:
-        raise CommandSyntaxError("expected: az=<number> el=<number>")
-
-    values: dict[str, float] = {}
-    for token in tokens:
-        match = _COORDINATE.fullmatch(token)
-        if match is None:
-            raise CommandSyntaxError("expected: az=<number> el=<number>")
-
-        axis = match.group("axis")
-        if axis in values:
-            raise CommandSyntaxError(f"{axis}= may only be given once")
-        values[axis] = float(match.group("value"))
-
-    if values.keys() != {"az", "el"}:
-        raise CommandSyntaxError("both az= and el= are required")
-
-    return Coordinates(azimuth=values["az"], elevation=values["el"])
+__all__ = [
+    "CommandSyntaxError",
+    "Coordinates",
+    "TurntableShell",
+    "main",
+    "parse_coordinates",
+]
 
 
 class TurntableShell(cmd.Cmd):
@@ -66,8 +38,7 @@ class TurntableShell(cmd.Cmd):
         stdout: TextIO | None = None,
     ) -> None:
         super().__init__(stdin=stdin, stdout=stdout)
-        self._connector = connector
-        self._turntable: Turntable | None = None
+        self._session = TurntableSession(connector=connector)
 
     def do_connect(self, arguments: str) -> None:
         """Attempt to connect, stopping and replacing any current connection."""
@@ -75,25 +46,24 @@ class TurntableShell(cmd.Cmd):
         if not self._require_no_arguments("connect", arguments):
             return
 
-        self.close()
         self._write("connecting...")
-        try:
-            self._turntable = self._connector()
-        except Exception as exc:  # noqa: BLE001 - keep the diagnostic shell alive
-            self._write(f"connection failed: {exc}")
+        result = self._session.connect()
+        self._write_cleanup_warnings(result.cleanup_warnings)
+        if result.error is not None:
+            self._write(f"connection failed: {result.error}")
             return
-        self._write(f"connected: {self._turntable.port}")
+        self._write(f"connected: {result.port}")
 
     def do_info(self, arguments: str) -> None:
         """Show the current controller state and physical position."""
 
         if not self._require_no_arguments("info", arguments):
             return
-        if self._turntable is None:
+        snapshot = self._session.get_complete_state()
+        if snapshot is None:
             self._write("state=disconnected")
             return
 
-        snapshot = self._turntable.get_complete_state()
         parts = [
             f"state={snapshot.state.value}",
             f"activity={snapshot.activity.value}",
@@ -145,19 +115,7 @@ class TurntableShell(cmd.Cmd):
     def close(self) -> None:
         """Safely stop and close the current connection, if any."""
 
-        turntable = self._turntable
-        self._turntable = None
-        if turntable is None:
-            return
-
-        try:
-            turntable.abort()
-        except Exception as exc:  # noqa: BLE001 - still close after a failed stop
-            self._write(f"warning: stop failed: {exc}")
-        try:
-            turntable.close()
-        except Exception as exc:  # noqa: BLE001 - report cleanup failure
-            self._write(f"warning: disconnect failed: {exc}")
+        self._write_cleanup_warnings(self._session.close())
 
     def _queue_position(
         self,
@@ -169,15 +127,9 @@ class TurntableShell(cmd.Cmd):
         except CommandSyntaxError as exc:
             self._write(f"error: {exc}")
             return
-        turntable = self._turntable
-        if turntable is None:
-            self._write("error: not connected")
-            return
-
         try:
-            operation = turntable.set_position if command == "set" else turntable.move_to
-            operation(pan=coordinates.azimuth, tilt=coordinates.elevation)
-        except (TurntableError, ValueError) as exc:
+            self._session.queue_position(command, coordinates)
+        except (NotConnectedError, TurntableError, ValueError) as exc:
             self._write(f"error: {exc}")
             return
         self._write(f"{command} queued: az={coordinates.azimuth:.3f} el={coordinates.elevation:.3f}")
@@ -190,6 +142,10 @@ class TurntableShell(cmd.Cmd):
 
     def _write(self, message: str) -> None:
         print(message, file=self.stdout)
+
+    def _write_cleanup_warnings(self, warnings: tuple[str, ...]) -> None:
+        for warning in warnings:
+            self._write(f"warning: {warning}")
 
 
 def main() -> None:
