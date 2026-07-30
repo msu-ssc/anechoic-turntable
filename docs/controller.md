@@ -19,11 +19,7 @@ with turntable2.find() as turntable:
         event = snapshot.most_recent_position_event
         position = snapshot.corrected_position
         if event is not None and position is not None:
-            print(
-                f"{event.timestamp}, "
-                f"yaw={event.yaw}, pitch={event.pitch}, "
-                f"pan={position.pan}, tilt={position.tilt}"
-            )
+            print(f"{event.timestamp}, yaw={event.yaw}, pitch={event.pitch}, pan={position.pan}, tilt={position.tilt}")
         time.sleep(0.5)
 
     print(f"Finished moving. Final position = {turntable.current_position()}")

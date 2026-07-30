@@ -7,7 +7,13 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.10.6",
     "pyserial>=3.5",
+    "textual>=1.0",
+    "typing-extensions>=4.16.0",
 ]
+
+[project.scripts]
+anechoic-turntable = "anechoic_turntable.repl:main"
+anechoic-turntable-tui = "anechoic_turntable.tui:main"
 
 [build-system]
 requires = ["pdm-backend"]
@@ -15,13 +21,27 @@ build-backend = "pdm.backend"
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.1",
     "pytest>=8.3.4",
     "ruff",
 ]
 
 [tool.ruff]
+line-length = 320 # This is the biggest number Ruff will accept.
 target-version = "py310"
 
 [tool.ruff.lint]
-# typing.Self is unavailable on the oldest supported Python version.
-ignore = ["PYI034"]
+ignore = [
+    "F541",   # f-string without any placeholders
+    "E501",   # line too long
+]
+
+extend-select = [
+    "I001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+force-single-line = true

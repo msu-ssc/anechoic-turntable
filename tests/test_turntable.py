@@ -119,12 +119,7 @@ def test_set_and_move_are_queued_and_tilt_regimes_are_transparent():
         turntable.set_position(pan=0, tilt=0)
         turntable.move_to(pan=15, tilt=-40)
 
-        wait_for(
-            lambda: (
-                turntable.current_state() == turntable2.TurntableState.STOPPED
-                and turntable.current_position() == turntable2.PanTilt(15, -40)
-            )
-        )
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED and turntable.current_position() == turntable2.PanTilt(15, -40))
 
         assert b"CMD:SET:0.000,0.000;" in fake.writes
         assert b"CMD:MOV:0.000,-27.000;" in fake.writes
@@ -153,15 +148,8 @@ def test_set_and_move_are_queued_and_tilt_regimes_are_transparent():
             internal_position=turntable2.YawPitch(yaw=15, pitch=-13),
             corrected_position=turntable2.PanTilt(pan=15, tilt=-40),
         )
-        assert any(
-            sample.internal_position == turntable2.YawPitch(yaw=0, pitch=0)
-            and sample.corrected_position == turntable2.PanTilt(pan=0, tilt=-27)
-            for sample in turntable.position_history()
-        )
-        assert all(
-            sample.internal_position != turntable2.YawPitch(yaw=4, pitch=2)
-            for sample in turntable.position_history()
-        )
+        assert any(sample.internal_position == turntable2.YawPitch(yaw=0, pitch=0) and sample.corrected_position == turntable2.PanTilt(pan=0, tilt=-27) for sample in turntable.position_history())
+        assert all(sample.internal_position != turntable2.YawPitch(yaw=4, pitch=2) for sample in turntable.position_history())
     finally:
         turntable.close()
 
@@ -261,12 +249,7 @@ def test_move_crosses_multiple_regimes(destination, final_wire_pitch):
         turntable.set_position(pan=0, tilt=0)
         turntable.move_to(pan=12, tilt=destination)
 
-        wait_for(
-            lambda: (
-                turntable.current_state() == turntable2.TurntableState.STOPPED
-                and turntable.current_position() == turntable2.PanTilt(12, destination)
-            )
-        )
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED and turntable.current_position() == turntable2.PanTilt(12, destination))
 
         expected_command = f"CMD:MOV:12.000,{final_wire_pitch:.3f};".encode()
         assert expected_command in fake.writes
