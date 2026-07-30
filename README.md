@@ -10,6 +10,11 @@ anechoic chamber turntable:
 See the [controller guide](docs/controller.md) for the Python API and
 [firmware documentation](firmware/README.md) for firmware-specific information.
 
+The [firmware–controller protocol contract](docs/protocol.md) is the
+authoritative source for UART framing, commands, reports, coordinate semantics,
+and compatibility behavior. It must be kept up to date whenever firmware or
+controller protocol behavior changes.
+
 ## Interactive controller
 
 Start the minimal interactive controller with:

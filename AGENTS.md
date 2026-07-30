@@ -36,6 +36,8 @@ This repository owns device-level behavior and compatibility.
 
 - Start with `README.md`.
 - Python controller behavior is documented in `docs/controller.md`.
+- `docs/protocol.md` is the authoritative firmware–controller protocol
+  contract.
 - Firmware-specific information belongs in `firmware/README.md`.
 - Tests live in `tests/`.
 
@@ -146,6 +148,11 @@ Preserve these invariants:
 - Communication loss and operation timeouts must fail safe.
 
 ## Firmware and wire protocol
+
+`docs/protocol.md` is authoritative for the contract between firmware and the
+Python controller. It MUST be kept up to date. Any change to UART framing,
+commands, reports, coordinate semantics, repetition, timing, acknowledgements,
+or error behavior must update the contract in the same change.
 
 The current firmware uses STM32 USART1 at 9600 baud, 8 data bits, no parity, and
 one stop bit. Treat electrical assumptions and pin mappings as hardware facts
