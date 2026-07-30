@@ -74,11 +74,20 @@ The local interpreter is normally `./.venv/bin/python`.
 
 Do not hand-edit `uv.lock` or use `pip` to manage this project environment.
 
+## Pre-commit
+
+This repository uses pre-commit to enforce Ruff linting and formatting.
+
+- Install hooks in a fresh clone: `uv run pre-commit install`
+- Run all hooks manually: `uv run pre-commit run --all-files`
+- If hooks modify files, review the changes and rerun them until they pass.
+
 ## Required verification
 
 For Python changes, run:
 
 ```shell
+uv run pre-commit run --all-files
 uv run pytest
 uv run ruff check src tests
 ```

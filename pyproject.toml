@@ -18,6 +18,7 @@ build-backend = "pdm.backend"
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.1",
     "pytest>=8.3.4",
     "ruff",
 ]
@@ -30,6 +31,7 @@ target-version = "py310"
 ignore = [
     "F541",   # f-string without any placeholders
     "E501",   # line too long
+    "PYI034", # typing.Self is unavailable on the oldest supported Python version
 ]
 
 extend-select = [

@@ -29,6 +29,13 @@ Create the development environment and run the checks with:
 
 ```shell
 uv sync --group dev
+uv run pre-commit install
 uv run pytest
 uv run ruff check src tests
+```
+
+Run every pre-commit check against the repository with:
+
+```shell
+uv run pre-commit run --all-files
 ```
