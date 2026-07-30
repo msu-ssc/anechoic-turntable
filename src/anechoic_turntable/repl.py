@@ -88,6 +88,18 @@ class TurntableShell(cmd.Cmd):
             parts.append(f"error={snapshot.last_error}")
         self._write(" ".join(parts))
 
+    def do_confirm(self, arguments: str) -> None:
+        """Approve the currently reported azimuth and elevation."""
+
+        if not self._require_no_arguments("confirm", arguments):
+            return
+        try:
+            position = self._session.confirm_position()
+        except (TurntableError, ValueError) as exc:
+            self._write(f"error: {exc}")
+            return
+        self._write(f"position confirmed: az={position.pan:.3f} el={position.tilt:.3f}")
+
     def do_set(self, arguments: str) -> None:
         """Set the reported position: set az=<number> el=<number>."""
 

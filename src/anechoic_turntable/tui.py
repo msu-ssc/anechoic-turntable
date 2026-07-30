@@ -29,7 +29,7 @@ from anechoic_turntable.session import TurntableSession
 from anechoic_turntable.session import parse_coordinates
 from anechoic_turntable.turntable import Turntable
 
-_COMMAND_HELP = "Commands: connect | info | set az=<number> el=<number> | mov az=<number> el=<number> | help | exit"
+_COMMAND_HELP = "Commands: connect | info | confirm | set az=<number> el=<number> | mov az=<number> el=<number> | help | exit"
 
 
 class TurntableTui(App[None]):
@@ -154,6 +154,10 @@ class TurntableTui(App[None]):
             if self._reject_arguments(command, arguments):
                 return
             self._write_info()
+        elif command == "confirm":
+            if self._reject_arguments(command, arguments):
+                return
+            self._confirm_position()
         elif command in {"set", "mov"}:
             self._queue_position(command, arguments)
         elif command == "help":
@@ -240,6 +244,15 @@ class TurntableTui(App[None]):
             self._write_message("state=disconnected")
             return
         self._write_message(self._format_info(snapshot))
+
+    def _confirm_position(self) -> None:
+        try:
+            position = self._session.confirm_position()
+        except (TurntableError, ValueError) as exc:
+            self._write_message(f"error: {exc}")
+            return
+        self._write_message(f"position confirmed: az={position.pan:.3f} el={position.tilt:.3f}")
+        self.refresh_controller_state()
 
     @staticmethod
     def _format_info(snapshot: TurntableCompleteState) -> str:

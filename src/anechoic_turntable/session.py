@@ -10,6 +10,7 @@ from typing import Literal
 
 from anechoic_turntable.controller import TurntableCompleteState
 from anechoic_turntable.controller import TurntableError
+from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.turntable import Turntable
 
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -155,6 +156,20 @@ class TurntableSession:
 
         operation = turntable.set_position if command == "set" else turntable.move_to
         operation(pan=coordinates.azimuth, tilt=coordinates.elevation)
+
+    def confirm_position(self) -> PanTilt:
+        """Approve the currently reported azimuth and elevation."""
+
+        with self._lock:
+            turntable = self._turntable
+        if turntable is None:
+            raise NotConnectedError("not connected")
+
+        turntable.confirm_position()
+        position = turntable.get_complete_state().corrected_position
+        if position is None:
+            raise TurntableError("confirmed position is unavailable")
+        return position
 
     def close(self) -> tuple[str, ...]:
         """Invalidate discovery, then safely stop and close the connection."""

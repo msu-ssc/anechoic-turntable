@@ -35,9 +35,10 @@ controller activity, start the terminal UI with:
 uv run anechoic-turntable-tui
 ```
 
-The command field accepts the same `connect`, `info`, `set`, `mov`, `help`, and
-`exit` commands as the interactive controller. Serial-port discovery runs in
-the background so the display remains responsive.
+The command field accepts the same `connect`, `info`, `confirm`, `set`, `mov`,
+`help`, and `exit` commands as the interactive controller. `confirm` approves
+the currently reported azimuth and elevation without sending a SET command.
+Serial-port discovery runs in the background so the display remains responsive.
 
 ## Development
 

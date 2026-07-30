@@ -15,6 +15,7 @@ class FakeTurntable:
         self.port = "/dev/fake0"
         self.move_calls = []
         self.set_calls = []
+        self.confirm_calls = 0
         self.aborted = False
         self.closed = False
         self.snapshot = SimpleNamespace(
@@ -36,6 +37,9 @@ class FakeTurntable:
 
     def move_to(self, *, pan, tilt):
         self.move_calls.append((pan, tilt))
+
+    def confirm_position(self):
+        self.confirm_calls += 1
 
     def abort(self):
         self.aborted = True
@@ -63,6 +67,7 @@ def test_tui_connects_updates_state_and_queues_commands():
 
         async with app.run_test() as pilot:
             await submit(app, pilot, "connect")
+            await submit(app, pilot, "confirm")
             await submit(app, pilot, "mov az=-3.5 el=4")
             app.refresh_controller_state()
 
@@ -70,6 +75,7 @@ def test_tui_connects_updates_state_and_queues_commands():
             assert rendered_text(app.query_one("#azimuth", Static)) == "az: 12.000°"
             assert rendered_text(app.query_one("#elevation", Static)) == "el: 5.000°"
             assert table.move_calls == [(-3.5, 4.0)]
+            assert table.confirm_calls == 1
 
         assert table.aborted
         assert table.closed

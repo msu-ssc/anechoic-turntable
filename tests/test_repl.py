@@ -17,6 +17,7 @@ class FakeTurntable:
         self.port = port
         self.set_calls = []
         self.move_calls = []
+        self.confirm_calls = 0
         self.aborted = False
         self.closed = False
         self.snapshot = SimpleNamespace(
@@ -32,6 +33,9 @@ class FakeTurntable:
 
     def move_to(self, *, pan, tilt):
         self.move_calls.append((pan, tilt))
+
+    def confirm_position(self):
+        self.confirm_calls += 1
 
     def abort(self):
         self.aborted = True
@@ -79,13 +83,16 @@ def test_shell_connects_reports_info_and_queues_commands():
 
     assert shell.onecmd("connect") is None
     assert shell.onecmd("info") is None
+    assert shell.onecmd("confirm") is None
     assert shell.onecmd("set el=5 az=12") is None
     assert shell.onecmd("mov az=-3.5 el=4") is None
 
     assert table.set_calls == [(12.0, 5.0)]
     assert table.move_calls == [(-3.5, 4.0)]
+    assert table.confirm_calls == 1
     assert "connected: /dev/fake0" in output.getvalue()
     assert "state=stopped activity=idle az=12.000 el=5.000" in output.getvalue()
+    assert "position confirmed: az=12.000 el=5.000" in output.getvalue()
     assert "set queued: az=12.000 el=5.000" in output.getvalue()
     assert "mov queued: az=-3.500 el=4.000" in output.getvalue()
 
@@ -95,6 +102,15 @@ def test_shell_requires_a_connection_for_position_commands():
     shell = TurntableShell(stdout=output)
 
     shell.onecmd("set az=12 el=5")
+
+    assert output.getvalue() == "error: not connected\n"
+
+
+def test_shell_requires_a_connection_for_confirm():
+    output = io.StringIO()
+    shell = TurntableShell(stdout=output)
+
+    shell.onecmd("confirm")
 
     assert output.getvalue() == "error: not connected\n"
 
