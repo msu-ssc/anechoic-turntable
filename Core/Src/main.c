@@ -57,6 +57,7 @@ void MYPROG_motor_control_loop();
 void MYPROG_move_axis(int axis, int speed, int dir);
 void MYPROG_disable_az();
 void MYPROG_disable_el();
+void MYPROG_SendData(char * data, int size);
 
 //global vars
 
