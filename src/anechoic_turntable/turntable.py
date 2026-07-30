@@ -5,23 +5,21 @@ from __future__ import annotations
 import logging
 import queue
 import time
-from typing import Literal
-from typing import overload
+from typing import Literal, overload
 
 import serial
 
-from msu_anechoic import create_null_logger
-from msu_anechoic.turntable2.controller import CommandWrite
-from msu_anechoic.turntable2.controller import ControllerThread
-from msu_anechoic.turntable2.controller import PositionSample
-from msu_anechoic.turntable2.controller import TurntableCompleteState
-from msu_anechoic.turntable2.controller import TurntableError
-from msu_anechoic.turntable2.controller import TurntableState
-from msu_anechoic.turntable2.messages import ReceivedMessage
-from msu_anechoic.turntable2.messages import ReceivedMessagePosition
-from msu_anechoic.turntable2.positions import PanTilt
-from msu_anechoic.turntable2.serial_listener import SerialConnection
-from msu_anechoic.turntable2.serial_listener import SerialListener
+from .controller import (
+    CommandWrite,
+    ControllerThread,
+    PositionSample,
+    TurntableCompleteState,
+    TurntableError,
+    TurntableState,
+)
+from .messages import ReceivedMessage, ReceivedMessagePosition
+from .positions import PanTilt
+from .serial_listener import SerialConnection, SerialListener
 
 
 class Turntable:
@@ -53,14 +51,14 @@ class Turntable:
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
-        self.logger = logger or create_null_logger()
+        self.logger = logger or logging.getLogger(__name__)
         self._closed = False
 
         if serial_connection is None:
             serial_connection = serial.Serial(port=port, baudrate=baudrate, timeout=timeout)
         self._serial = serial_connection
 
-        received_messages: "queue.Queue[ReceivedMessage]" = queue.Queue()
+        received_messages: queue.Queue[ReceivedMessage] = queue.Queue()
         self._listener = SerialListener(
             serial_connection=self._serial,
             output_queue=received_messages,
@@ -91,7 +89,7 @@ class Turntable:
         event_history_size: int = 1_000,
         poll_interval: float = 0.01,
         logger: logging.Logger | None = None,
-    ) -> "Turntable":
+    ) -> Turntable:
         """Find the first serial port that emits a valid position report."""
 
         if discovery_timeout <= 0:
@@ -99,7 +97,7 @@ class Turntable:
 
         from serial.tools.list_ports import comports
 
-        logger = logger or create_null_logger()
+        logger = logger or logging.getLogger(__name__)
         for port_info in comports():
             turntable: Turntable | None = None
             try:
@@ -221,7 +219,7 @@ class Turntable:
         self._controller.join(timeout=join_timeout)
         self._serial.close()
 
-    def __enter__(self) -> "Turntable":
+    def __enter__(self) -> Turntable:
         return self
 
     def __exit__(self, *exc_info: object) -> None:

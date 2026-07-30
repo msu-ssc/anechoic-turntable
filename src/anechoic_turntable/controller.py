@@ -11,17 +11,12 @@ import queue
 import threading
 import time
 from collections import deque
-from typing import Literal
-from typing import overload
+from typing import Literal, overload
 
-from msu_anechoic.turntable2.messages import ReceivedMessage
-from msu_anechoic.turntable2.messages import ReceivedMessagePosition
-from msu_anechoic.turntable2.positions import PanTilt
-from msu_anechoic.turntable2.positions import YawPitch
-from msu_anechoic.turntable2.regimes import TiltRegime
-from msu_anechoic.turntable2.regimes import find_best_regime
-from msu_anechoic.turntable2.regimes import find_next_regime
-from msu_anechoic.turntable2.serial_listener import SerialConnection
+from .messages import ReceivedMessage, ReceivedMessagePosition
+from .positions import PanTilt, YawPitch
+from .regimes import TiltRegime, find_best_regime, find_next_regime
+from .serial_listener import SerialConnection
 
 ALLOWABLE_DISCREPANCY_DEG = 0.11
 ABSOLUTE_PAN_BOUNDS = (-180.0, 180.0)
@@ -150,7 +145,7 @@ class ControllerThread(threading.Thread):
     def __init__(
         self,
         serial_connection: SerialConnection,
-        received_messages: "queue.Queue[ReceivedMessage]",
+        received_messages: queue.Queue[ReceivedMessage],
         *,
         communication_timeout: float = 1.0,
         command_repetitions: int = 3,
@@ -175,8 +170,8 @@ class ControllerThread(threading.Thread):
         self._poll_interval = poll_interval
         self._logger = logger or logging.getLogger(__name__)
 
-        self._command_queue: "queue.Queue[_Command]" = queue.Queue()
-        self._queued_commands: "deque[_Command]" = deque()
+        self._command_queue: queue.Queue[_Command] = queue.Queue()
+        self._queued_commands: deque[_Command] = deque()
         self._operation: _Operation | None = None
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
@@ -192,9 +187,9 @@ class ControllerThread(threading.Thread):
         self._most_recent_communication = float("-inf")
         self._last_communication_at: datetime.datetime | None = None
         self._started_at = time.monotonic()
-        self._events: "deque[ReceivedMessage]" = deque(maxlen=event_history_size)
-        self._position_history: "deque[PositionSample]" = deque(maxlen=event_history_size)
-        self._command_history: "deque[CommandWrite]" = deque(maxlen=event_history_size)
+        self._events: deque[ReceivedMessage] = deque(maxlen=event_history_size)
+        self._position_history: deque[PositionSample] = deque(maxlen=event_history_size)
+        self._command_history: deque[CommandWrite] = deque(maxlen=event_history_size)
         self._position_history_generation = 0
         self._most_recent_by_kind: dict[str, ReceivedMessage] = {}
         self._last_error: Exception | None = None

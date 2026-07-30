@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 from pydantic import ValidationError
 
-from msu_anechoic import turntable2
+import anechoic_turntable as turntable2
 
 
 class FakeSerial:

@@ -1,13 +1,13 @@
 # Threaded Turntable Controller
 
-`msu_anechoic.turntable2` is the non-blocking turntable interface. It uses one
+`anechoic_turntable` is the non-blocking turntable interface. It uses one
 thread to frame incoming serial messages and a second thread to maintain
 controller state and send commands.
 
 ```python
 import time
 
-from msu_anechoic import turntable2
+import anechoic_turntable as turntable2
 
 
 with turntable2.find() as turntable:

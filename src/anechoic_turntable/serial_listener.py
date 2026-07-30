@@ -7,8 +7,7 @@ import queue
 import threading
 from typing import Protocol
 
-from msu_anechoic.turntable2.messages import ReceivedMessage
-from msu_anechoic.turntable2.messages import parse_received_message
+from .messages import ReceivedMessage, parse_received_message
 
 
 class SerialConnection(Protocol):
@@ -30,7 +29,7 @@ class SerialListener(threading.Thread):
     def __init__(
         self,
         serial_connection: SerialConnection,
-        output_queue: "queue.Queue[ReceivedMessage]",
+        output_queue: queue.Queue[ReceivedMessage],
         *,
         poll_interval: float = 0.01,
         logger: logging.Logger | None = None,
