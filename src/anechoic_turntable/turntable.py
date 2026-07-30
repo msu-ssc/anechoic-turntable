@@ -9,6 +9,7 @@ from typing import Literal
 from typing import overload
 
 import serial
+from typing_extensions import Self
 
 from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.controller import ControllerThread
@@ -220,7 +221,7 @@ class Turntable:
         self._controller.join(timeout=join_timeout)
         self._serial.close()
 
-    def __enter__(self) -> Turntable:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
