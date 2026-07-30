@@ -36,6 +36,15 @@ trusted position and sending SET would be undesirable. It adopts the current
 firmware yaw/pitch as physical pan/tilt, establishes the corresponding tilt
 regime, and sends no command to the hardware.
 
+`send_raw(payload)` is a diagnostic escape hatch that queues the supplied bytes
+for exactly one write through the controller's normal serialized writer. It
+does not validate framing, commands, or coordinate bounds. Because arbitrary
+bytes can move the table or change the firmware coordinate frame without a
+tracked controller operation, sending raw bytes clears the controller's trusted
+physical-coordinate state. A subsequent normal move requires `set_position()`
+or `confirm_position()` first. Use `abort()` rather than a raw `p` when an
+immediate stop is required: abort bypasses queued work, while raw writes do not.
+
 The web controller estimates move duration from the current and requested
 positions. When a move timeout is left blank, it uses
 `estimated_travel_time * 1.5 + 5 seconds`; a positive custom timeout can be
@@ -63,7 +72,8 @@ under the controller lock. It includes:
 - `uncorrected_position`: the latest raw `YawPitch`;
 - `corrected_position`: the latest regime-compensated `PanTilt`;
 - `current_regime` and the two-axis `regime_offset`;
-- `most_recent_position_event` and `most_recent_event`;
+- `most_recent_position_event`, `most_recent_event`, and the five
+  `recent_events` used by live diagnostics;
 - `state`, `activity`, its detailed `activity_phase`, and `has_been_set`;
 - the active operation's corrected `target_position`, `internal_target`, and
   timezone-aware `activity_timeout_at`;

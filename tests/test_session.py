@@ -9,12 +9,16 @@ class FakeTurntable:
     def __init__(self):
         self.aborted = False
         self.closed = False
+        self.raw_writes = []
 
     def abort(self):
         self.aborted = True
 
     def close(self):
         self.closed = True
+
+    def send_raw(self, payload):
+        self.raw_writes.append(payload)
 
 
 def test_connection_finishing_after_close_is_stopped_and_discarded():
@@ -42,3 +46,30 @@ def test_connection_finishing_after_close_is_stopped_and_discarded():
     assert not session.connected
     assert table.aborted
     assert table.closed
+
+
+def test_session_sends_exact_ascii_and_stops_connected_turntable():
+    table = FakeTurntable()
+    session = TurntableSession(connector=lambda: table)
+    assert session.connect().connected
+
+    session.send_raw("CMD:MOV:0.000,-70.00;")
+    session.stop()
+
+    assert table.raw_writes == [b"CMD:MOV:0.000,-70.00;"]
+    assert table.aborted
+
+
+def test_session_raw_rejects_non_ascii():
+    table = FakeTurntable()
+    session = TurntableSession(connector=lambda: table)
+    assert session.connect().connected
+
+    try:
+        session.send_raw("CMD:MOV:0,−70;")
+    except ValueError as exc:
+        assert str(exc) == "raw command must contain only ASCII characters"
+    else:
+        raise AssertionError("non-ASCII raw command was accepted")
+
+    assert table.raw_writes == []

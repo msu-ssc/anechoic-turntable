@@ -108,6 +108,20 @@ def test_serial_listener_frames_fragmented_lines():
         turntable.close()
 
 
+def test_complete_state_includes_five_most_recent_serial_lines():
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        for index in range(1, 7):
+            fake.emit(f"diagnostic {index}\r\n".encode())
+
+        wait_for(lambda: turntable.get_complete_state().event_count == 6)
+
+        assert [event.message for event in turntable.get_complete_state().recent_events] == [f"diagnostic {index}\r\n".encode() for index in range(2, 7)]
+    finally:
+        turntable.close()
+
+
 def test_set_and_move_are_queued_and_tilt_regimes_are_transparent():
     fake = FakeSerial()
     turntable = make_turntable(fake)
@@ -361,6 +375,49 @@ def test_abort_stops_the_active_move_and_cancels_queued_moves():
         assert turntable.current_state() == turntable2.TurntableState.STOPPED
         time.sleep(0.03)
         assert b"CMD:MOV:20.000,0.000;" not in fake.writes
+    finally:
+        turntable.close()
+
+
+def test_raw_command_is_written_once_without_coordinate_validation():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        writes_before_raw = len(fake.writes)
+
+        turntable.send_raw(b"CMD:MOV:0.000,-70.00;")
+
+        wait_for(lambda: len(fake.writes) > writes_before_raw)
+        assert fake.writes[writes_before_raw:] == [b"CMD:MOV:0.000,-70.00;"]
+        assert turntable.command_history()[-1].command == b"CMD:MOV:0.000,-70.00;"
+        state = turntable.get_complete_state()
+        assert state.state == turntable2.TurntableState.NOT_SET
+        assert not state.has_been_set
+        assert state.corrected_position is None
+        assert state.position_history_generation == 2
+    finally:
+        turntable.close()
+
+
+def test_raw_command_waits_behind_a_tracked_move():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        turntable.move_to(pan=10, tilt=0)
+        wait_for(lambda: b"CMD:MOV:10.000,0.000;" in fake.writes)
+
+        turntable.send_raw(b"diagnostic;")
+        time.sleep(0.03)
+        assert b"diagnostic;" not in fake.writes
+
+        fake.emit_internal_position(yaw=10, pitch=0)
+        wait_for(lambda: b"diagnostic;" in fake.writes)
     finally:
         turntable.close()
 

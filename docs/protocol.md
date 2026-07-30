@@ -170,7 +170,29 @@ The controller sends stop once when:
 - the interactive diagnostic shell disconnects from a live controller.
 
 Bytes such as `a`, `d`, `w`, and `s` that may be recognized by historical
-firmware are outside this contract. The controller MUST NOT send them.
+firmware are outside this contract. Normal controller operations MUST NOT send
+them.
+
+### Diagnostic raw writes
+
+The diagnostic TUI MAY expose an explicitly named `raw` operation for firmware
+development. This is an escape hatch from the normal command contract, not a
+new firmware command:
+
+- its ASCII payload is written exactly once without command, framing, or
+  coordinate validation;
+- it MUST use the controller's serialized write path rather than accessing the
+  serial connection directly;
+- it MUST wait behind any active tracked operation;
+- after the write, the controller MUST discard its trusted coordinate frame and
+  require SET or explicit position confirmation before another normal move;
+- it MUST NOT replace immediate abort, because a queued raw `p` is not an
+  immediate stop.
+
+An operator using `raw` is responsible for the complete payload, including any
+required semicolon. Unknown bytes and unsafe coordinate targets retain the
+firmware behavior described elsewhere in this contract; the controller provides
+no completion tracking for a raw command.
 
 ## Command repetition and idempotence
 

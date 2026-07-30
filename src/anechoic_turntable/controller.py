@@ -87,6 +87,7 @@ class TurntableCompleteState:
     regime_offset: PanTilt | None
     most_recent_position_event: ReceivedMessagePosition | None
     most_recent_event: ReceivedMessage | None
+    recent_events: tuple[ReceivedMessage, ...]
     last_communication_at: datetime.datetime | None
     seconds_since_last_communication: float
     communication_timeout: float
@@ -118,7 +119,13 @@ class _MoveCommand:
     timeout: float
 
 
-_Command = _SetCommand | _MoveCommand
+@dataclasses.dataclass(frozen=True)
+class _RawCommand:
+    generation: int
+    payload: bytes
+
+
+_Command = _SetCommand | _MoveCommand | _RawCommand
 
 
 @dataclasses.dataclass
@@ -256,6 +263,18 @@ class ControllerThread(threading.Thread):
                 )
             )
 
+    def submit_raw(self, payload: bytes) -> None:
+        """Queue exact diagnostic bytes for one write without protocol validation."""
+
+        with self._lock:
+            self._ensure_open()
+            self._command_queue.put(
+                _RawCommand(
+                    generation=self._command_generation,
+                    payload=bytes(payload),
+                )
+            )
+
     def submit_abort(self) -> None:
         """Immediately stop movement and invalidate all previously submitted work."""
 
@@ -324,6 +343,7 @@ class ControllerThread(threading.Thread):
                 regime_offset=self._regime_offset,
                 most_recent_position_event=position_event,
                 most_recent_event=self._events[-1] if self._events else None,
+                recent_events=tuple(self._events)[-5:],
                 last_communication_at=self._last_communication_at,
                 seconds_since_last_communication=time.monotonic() - self._most_recent_communication,
                 communication_timeout=self._communication_timeout,
@@ -525,8 +545,28 @@ class ControllerThread(threading.Thread):
                 return
             if isinstance(command, _SetCommand):
                 self._begin_set(command)
-            else:
+            elif isinstance(command, _MoveCommand):
                 self._begin_move(command)
+            else:
+                self._send_raw(command)
+
+    def _send_raw(self, command: _RawCommand) -> None:
+        with self._lock:
+            if command.generation != self._command_generation:
+                return
+            # Arbitrary bytes may SET the firmware coordinate frame or start
+            # motion that this controller cannot track. Fail closed by
+            # discarding all trusted physical-coordinate state.
+            self._position_history.clear()
+            self._position_history_generation += 1
+            self._has_been_set = False
+            self._set_requested = False
+            self._current_regime = None
+            self._regime_offset = None
+            self._corrected_position = None
+            if self._state != TurntableState.NO_COMMUNICATION:
+                self._state = TurntableState.NOT_SET
+            self._write_command(command.payload, repetitions=1)
 
     def _begin_set(self, command: _SetCommand) -> None:
         with self._lock:

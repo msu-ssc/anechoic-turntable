@@ -154,6 +154,11 @@ class Turntable:
 
         self._controller.confirm_position()
 
+    def send_raw(self, payload: bytes) -> None:
+        """Queue exact diagnostic bytes for one unvalidated serial write."""
+
+        self._controller.submit_raw(payload)
+
     def abort(self) -> None:
         """Immediately stop movement and invalidate all queued commands."""
 
