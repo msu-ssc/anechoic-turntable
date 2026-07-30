@@ -3,13 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from anechoic_turntable import PanTilt, TurntableActivity, TurntableState
-from anechoic_turntable.repl import (
-    CommandSyntaxError,
-    Coordinates,
-    TurntableShell,
-    parse_coordinates,
-)
+from anechoic_turntable import PanTilt
+from anechoic_turntable import TurntableActivity
+from anechoic_turntable import TurntableState
+from anechoic_turntable.repl import CommandSyntaxError
+from anechoic_turntable.repl import Coordinates
+from anechoic_turntable.repl import TurntableShell
+from anechoic_turntable.repl import parse_coordinates
 
 
 class FakeTurntable:

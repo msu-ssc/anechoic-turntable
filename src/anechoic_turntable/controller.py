@@ -11,11 +11,16 @@ import queue
 import threading
 import time
 from collections import deque
-from typing import Literal, overload
+from typing import Literal
+from typing import overload
 
-from anechoic_turntable.messages import ReceivedMessage, ReceivedMessagePosition
-from anechoic_turntable.positions import PanTilt, YawPitch
-from anechoic_turntable.regimes import TiltRegime, find_best_regime, find_next_regime
+from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessagePosition
+from anechoic_turntable.positions import PanTilt
+from anechoic_turntable.positions import YawPitch
+from anechoic_turntable.regimes import TiltRegime
+from anechoic_turntable.regimes import find_best_regime
+from anechoic_turntable.regimes import find_next_regime
 from anechoic_turntable.serial_listener import SerialConnection
 
 ALLOWABLE_DISCREPANCY_DEG = 0.11
@@ -294,11 +299,7 @@ class ControllerThread(threading.Thread):
                 target_position = PanTilt(operation.pan, operation.tilt)
                 internal_target = YawPitch(operation.pan, operation.tilt)
             elif isinstance(operation, _MoveOperation):
-                activity = (
-                    TurntableActivity.CHANGING_REGIME
-                    if operation.phase in {"regime_move", "regime_set"}
-                    else TurntableActivity.MOVING
-                )
+                activity = TurntableActivity.CHANGING_REGIME if operation.phase in {"regime_move", "regime_set"} else TurntableActivity.MOVING
                 activity_phase = operation.phase
                 timeout_at = operation.timeout_at
                 target_position = PanTilt(operation.pan, operation.tilt)
@@ -473,9 +474,7 @@ class ControllerThread(threading.Thread):
                         self._continue_move(operation)
                     elif operation.phase == "final":
                         self._operation = None
-                        self._state = (
-                            TurntableState.MOVING if self._has_pending_commands() else TurntableState.STOPPED
-                        )
+                        self._state = TurntableState.MOVING if self._has_pending_commands() else TurntableState.STOPPED
 
             assert self._corrected_position is not None
             self._position_history.append(
@@ -495,9 +494,7 @@ class ControllerThread(threading.Thread):
         now = time.monotonic()
         with self._lock:
             operation = self._operation
-            reference = (
-                self._most_recent_communication if math.isfinite(self._most_recent_communication) else self._started_at
-            )
+            reference = self._most_recent_communication if math.isfinite(self._most_recent_communication) else self._started_at
             if now - reference > self._communication_timeout:
                 if self._state != TurntableState.NO_COMMUNICATION:
                     if isinstance(operation, _MoveOperation):
@@ -521,11 +518,7 @@ class ControllerThread(threading.Thread):
 
     def _start_next_command(self) -> None:
         with self._lock:
-            if (
-                self._operation is not None
-                or not self._queued_commands
-                or self._state == TurntableState.NO_COMMUNICATION
-            ):
+            if self._operation is not None or not self._queued_commands or self._state == TurntableState.NO_COMMUNICATION:
                 return
             command = self._queued_commands.popleft()
             if command.generation != self._command_generation:
@@ -667,10 +660,7 @@ def _validate_regime_pitch(pitch: float) -> None:
 
 
 def _position_matches(actual: YawPitch, expected: YawPitch) -> bool:
-    return (
-        abs(actual.yaw - expected.yaw) <= ALLOWABLE_DISCREPANCY_DEG
-        and abs(actual.pitch - expected.pitch) <= ALLOWABLE_DISCREPANCY_DEG
-    )
+    return abs(actual.yaw - expected.yaw) <= ALLOWABLE_DISCREPANCY_DEG and abs(actual.pitch - expected.pitch) <= ALLOWABLE_DISCREPANCY_DEG
 
 
 def _apply_offset(position: YawPitch, offset: PanTilt) -> PanTilt:

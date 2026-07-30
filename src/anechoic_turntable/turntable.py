@@ -5,21 +5,22 @@ from __future__ import annotations
 import logging
 import queue
 import time
-from typing import Literal, overload
+from typing import Literal
+from typing import overload
 
 import serial
 
-from anechoic_turntable.controller import (
-    CommandWrite,
-    ControllerThread,
-    PositionSample,
-    TurntableCompleteState,
-    TurntableError,
-    TurntableState,
-)
-from anechoic_turntable.messages import ReceivedMessage, ReceivedMessagePosition
+from anechoic_turntable.controller import CommandWrite
+from anechoic_turntable.controller import ControllerThread
+from anechoic_turntable.controller import PositionSample
+from anechoic_turntable.controller import TurntableCompleteState
+from anechoic_turntable.controller import TurntableError
+from anechoic_turntable.controller import TurntableState
+from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.positions import PanTilt
-from anechoic_turntable.serial_listener import SerialConnection, SerialListener
+from anechoic_turntable.serial_listener import SerialConnection
+from anechoic_turntable.serial_listener import SerialListener
 
 
 class Turntable:

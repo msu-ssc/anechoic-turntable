@@ -6,7 +6,8 @@ import cmd
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, TextIO
+from typing import Literal
+from typing import TextIO
 
 from anechoic_turntable.controller import TurntableError
 from anechoic_turntable.turntable import Turntable
@@ -179,10 +180,7 @@ class TurntableShell(cmd.Cmd):
         except (TurntableError, ValueError) as exc:
             self._write(f"error: {exc}")
             return
-        self._write(
-            f"{command} queued: az={coordinates.azimuth:.3f} "
-            f"el={coordinates.elevation:.3f}"
-        )
+        self._write(f"{command} queued: az={coordinates.azimuth:.3f} el={coordinates.elevation:.3f}")
 
     def _require_no_arguments(self, command: str, arguments: str) -> bool:
         if arguments:
