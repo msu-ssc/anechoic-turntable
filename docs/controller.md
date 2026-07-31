@@ -25,6 +25,15 @@ with turntable2.find() as turntable:
     print(f"Finished moving. Final position = {turntable.current_position()}")
 ```
 
+## Version metadata
+
+The package exports `CONTROLLER_VERSION`, `PROTOCOL_VERSION`, and
+`REFERENCE_FIRMWARE_VERSION`. The latter two are snapshots of the canonical
+protocol contract and repository firmware version when the controller release
+was made; they do not report the firmware actually installed on a connected
+turntable. `__version__` is an alias for `CONTROLLER_VERSION` and matches the
+installed Python distribution version.
+
 `set_position` and `move_to` queue work and return immediately. Commands are
 processed in order. `move_to` sends physical pan and tilt directly as firmware
 yaw and pitch. `abort` is the exception: it immediately

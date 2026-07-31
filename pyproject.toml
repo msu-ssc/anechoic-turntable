@@ -1,6 +1,6 @@
 [project]
 name = "anechoic-turntable"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Python controller and firmware for the MSU anechoic chamber turntable"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,8 +16,15 @@ anechoic-turntable = "anechoic_turntable.repl:main"
 anechoic-turntable-tui = "anechoic_turntable.tui:main"
 
 [build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/anechoic_turntable/_version.py"
+pattern = 'CONTROLLER_VERSION = "(?P<version>[^"]+)"'
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/anechoic_turntable"]
 
 [dependency-groups]
 dev = [

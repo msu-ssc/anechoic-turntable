@@ -1,0 +1,165 @@
+name: Release controller after merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  release-controller:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      - name: Check out main with release history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Determine controller version bump
+        id: bump
+        shell: bash
+        run: |
+          LABELS="$(jq -r '.pull_request.labels[].name // empty' "$GITHUB_EVENT_PATH")"
+          COUNT=0
+          BUMP_TYPE=""
+
+          while IFS= read -r LABEL; do
+            case "$LABEL" in
+              version:major)
+                BUMP_TYPE="major"
+                COUNT=$((COUNT+1))
+                ;;
+              version:minor)
+                BUMP_TYPE="minor"
+                COUNT=$((COUNT+1))
+                ;;
+              version:patch)
+                BUMP_TYPE="patch"
+                COUNT=$((COUNT+1))
+                ;;
+              version:no_bump)
+                BUMP_TYPE="no_bump"
+                COUNT=$((COUNT+1))
+                ;;
+            esac
+          done <<< "$LABELS"
+
+          if [ "$COUNT" -ne 1 ]; then
+            echo "Expected exactly one controller version label; found $COUNT."
+            exit 1
+          fi
+          echo "type=$BUMP_TYPE" >> "$GITHUB_OUTPUT"
+
+      - name: Record no-bump merge
+        if: steps.bump.outputs.type == 'no_bump'
+        run: echo "version:no_bump selected; no controller release will be created."
+
+      - name: Set release commit author
+        if: steps.bump.outputs.type != 'no_bump'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Prepare release note
+        if: steps.bump.outputs.type != 'no_bump'
+        env:
+          EVENT_PATH: ${{ github.event_path }}
+          NOTE_FILE: ${{ runner.temp }}/controller-release-note.txt
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          event = json.loads(Path(os.environ["EVENT_PATH"]).read_text(encoding="utf-8"))
+          pull_request = event["pull_request"]
+          title = pull_request.get("title") or "Controller release"
+          body = pull_request.get("body") or ""
+          match = re.search(r"^[Rr]elease note:\s*(.+?)\s*$", body, re.MULTILINE)
+          note = match.group(1) if match else title
+          Path(os.environ["NOTE_FILE"]).write_text(f"{note}\n", encoding="utf-8")
+          PY
+
+      - name: Commit and tag controller release
+        if: steps.bump.outputs.type != 'no_bump'
+        id: release
+        env:
+          BUMP_TYPE: ${{ steps.bump.outputs.type }}
+          NOTE_FILE: ${{ runner.temp }}/controller-release-note.txt
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_DATE="$(date -u +%F)"
+
+          for ATTEMPT in 1 2 3 4 5; do
+            git fetch origin main --tags
+
+            RELEASE_MARKER="[controller-release-pr:${PR_NUMBER}]"
+            EXISTING_COMMIT="$(git log origin/main --fixed-strings \
+              --grep="$RELEASE_MARKER" --format=%H -n 1)"
+            if [ -n "$EXISTING_COMMIT" ]; then
+              EXISTING_TAG="$(git tag --points-at "$EXISTING_COMMIT" \
+                --list 'CONTROLLER_v*' | head -n 1)"
+              if [ -z "$EXISTING_TAG" ]; then
+                echo "Found an existing release commit without its controller tag."
+                exit 1
+              fi
+              echo "version=${EXISTING_TAG#CONTROLLER_v}" >> "$GITHUB_OUTPUT"
+              echo "tag=$EXISTING_TAG" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            git checkout --detach origin/main
+
+            NEW_VERSION="$(python tools/release_version.py bump "$BUMP_TYPE" \
+              --release-date "$RELEASE_DATE" \
+              --release-note-file "$NOTE_FILE")"
+            TAG="CONTROLLER_v${NEW_VERSION}"
+
+            git add src/anechoic_turntable/_version.py CHANGELOG.md
+            git commit -m "chore: release controller ${NEW_VERSION} ${RELEASE_MARKER}"
+            git tag "$TAG"
+
+            if git push --atomic origin HEAD:main "refs/tags/${TAG}"; then
+              echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "Release push raced with another main update; retrying ($ATTEMPT/5)."
+            git tag -d "$TAG"
+          done
+
+          echo "Unable to push the controller release after five attempts."
+          exit 1
+
+      - name: Create GitHub Release
+        if: steps.bump.outputs.type != 'no_bump'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTE_FILE: ${{ runner.temp }}/controller-release-note.txt
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          {
+            printf "## Controller %s\n\n" "$VERSION"
+            sed -n '1p' "$NOTE_FILE"
+            printf "\nPR: %s\n" "$PR_URL"
+          } > "$RUNNER_TEMP/controller-release-notes.md"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists; skipping."
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file "$RUNNER_TEMP/controller-release-notes.md"
+          fi

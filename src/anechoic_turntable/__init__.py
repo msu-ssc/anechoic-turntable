@@ -9,6 +9,10 @@ Typical use::
         turntable.move_to(pan=30, tilt=10)
 """
 
+from anechoic_turntable._version import CONTROLLER_VERSION
+from anechoic_turntable._version import PROTOCOL_VERSION
+from anechoic_turntable._version import REFERENCE_FIRMWARE_VERSION
+from anechoic_turntable._version import __version__
 from anechoic_turntable.controller import ALLOWABLE_DISCREPANCY_DEG
 from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.controller import ControllerThread
@@ -28,6 +32,9 @@ from anechoic_turntable.turntable import find
 
 __all__ = [
     "ALLOWABLE_DISCREPANCY_DEG",
+    "CONTROLLER_VERSION",
+    "PROTOCOL_VERSION",
+    "REFERENCE_FIRMWARE_VERSION",
     "CommandWrite",
     "ControllerThread",
     "PanTilt",
@@ -41,6 +48,7 @@ __all__ = [
     "TurntableError",
     "TurntableState",
     "YawPitch",
+    "__version__",
     "find",
     "parse_received_message",
 ]
