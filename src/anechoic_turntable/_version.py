@@ -1,6 +1,6 @@
 """Controller and compatibility versions captured for this release."""
 
-CONTROLLER_VERSION = "0.2.0"
+CONTROLLER_VERSION = "0.2.1"
 PROTOCOL_VERSION = "2.0.0"
 REFERENCE_FIRMWARE_VERSION = "0.0.0"
 
