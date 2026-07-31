@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <math.h>
+#include "firmware_version.h"
 
 /* USER CODE END Includes */
 
@@ -33,7 +34,6 @@
 /* USER CODE BEGIN PTD */
 
 /* USER CODE END PTD */
-
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
@@ -136,6 +136,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   	  buff =0;
   }else if(buff == ';')
   {	  memcpy(rxBuffer_command,rxBuffer,buffn);
+    rxBuffer_command[buffn] = '\0';
 	  command_read =1;
 	  buffn =0;
 	  memset(rxBuffer, 0, sizeof(rxBuffer));
@@ -158,6 +159,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
 }
 
+// Function to determine if a user has input in the info command
+bool parse_info_command(const char *input)
+{
+  return strcmp(input, "CMD:INFO") == 0;
+}
 
 // Function to parse the input string and extract two float values
 bool parse_mov_command(const char *input, float *x, float *y) {
@@ -278,39 +284,58 @@ void MYPROG_main_loop()
 	MYPROG_Delay(5);
 	//MYPROG_SendData("ACK\n",3);
 
-	if(command_read ==1)
-	{
-		//MYPROG_SendData("read command",10);
+	if (command_read == 1)
+{
+    if (parse_info_command(rxBuffer_command))
+    {
+        static const char firmware_info[] =
+            "FIRMWARE VERSION: " FIRMWARE_VERSION "\r\n";
 
-		if(parse_mov_command(rxBuffer_command,&Azc,&Elc))
-		{
-			move = 1;
-			mode = 0;
+        MYPROG_SendData(
+            (char *)firmware_info,
+            sizeof(firmware_info) - 1
+        );
+    }
+    else
+    {
+        if (parse_mov_command(rxBuffer_command, &Azc, &Elc))
+        {
+            move = 1;
+            mode = 0;
+        }
+        else
+        {
+            move = 0;
+        }
 
-		}else{
-			move = 0;
-		}
+        if (parse_set_command(
+                rxBuffer_command,
+                &settimer1,
+                &settimer2))
+        {
+            TIM1->CNT =
+                (uint32_t)(21600 + (settimer2 * 240.0f));
+            TIM2->CNT =
+                (uint32_t)(43200 + (settimer1 * 240.0f));
+        }
 
-		if(parse_set_command(rxBuffer_command,&settimer1,&settimer2))
-		{
-			TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f)); // elevation
-			TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f)); // azimuth
-		}
-		//ftoa();
-		Azc = Azc;
-		Elc = Elc;
-		snprintf(sendbuffer,42,"%.2f , %.2f \r\n",Azc,Elc);
+        snprintf(
+            sendbuffer,
+            sizeof(sendbuffer),
+            "%.2f , %.2f \r\n",
+            Azc,
+            Elc
+        );
+        MYPROG_SendData(sendbuffer, strlen(sendbuffer));
 
-		MYPROG_SendData(sendbuffer,42);
-		command_read =0;
+        command_position_AZ = Azc;
+        command_position_EL = Elc;
+        Az_speed = 255;
+        El_speed = 255;
+    }
 
-		command_position_AZ = Azc;//(Azc*240)+21600;
-		command_position_EL = Elc;//(Elc*240)+21600;
-
-		Az_speed = 255;
-		El_speed = 255;
-	}
-
+    command_read = 0;
+}
 	int target_reached = move_az && move_el;
 
 	if(move && !target_reached && mode ==0)
