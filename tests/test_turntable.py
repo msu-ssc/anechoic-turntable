@@ -122,7 +122,7 @@ def test_complete_state_includes_five_most_recent_serial_lines():
         turntable.close()
 
 
-def test_set_and_move_are_queued_and_tilt_regimes_are_transparent():
+def test_set_and_move_are_queued_with_direct_coordinates():
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
@@ -136,9 +136,9 @@ def test_set_and_move_are_queued_and_tilt_regimes_are_transparent():
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED and turntable.current_position() == turntable2.PanTilt(15, -40))
 
         assert b"CMD:SET:0.000,0.000;" in fake.writes
-        assert b"CMD:MOV:0.000,-27.000;" in fake.writes
-        assert b"CMD:MOV:15.000,-13.000;" in fake.writes
-        assert turntable.most_recent_event(kind="position").pitch == -13
+        assert b"CMD:MOV:15.000,-40.000;" in fake.writes
+        assert not any(write.startswith(b"CMD:SET:") and write != b"CMD:SET:0.000,0.000;" for write in fake.writes)
+        assert turntable.most_recent_event(kind="position").pitch == -40
         command_history = turntable.command_history()
         assert [write.command for write in command_history] == fake.writes
         assert all(write.timestamp.tzinfo is not None for write in command_history)
@@ -148,21 +148,20 @@ def test_set_and_move_are_queued_and_tilt_regimes_are_transparent():
         )
 
         complete_state = turntable.get_complete_state()
-        assert complete_state.uncorrected_position == turntable2.YawPitch(yaw=15, pitch=-13)
+        assert complete_state.uncorrected_position == turntable2.YawPitch(yaw=15, pitch=-40)
         assert complete_state.corrected_position == turntable2.PanTilt(pan=15, tilt=-40)
-        assert complete_state.current_regime == turntable2.TiltRegime(center_tilt=-27, allowable_offset=29)
-        assert complete_state.regime_offset == turntable2.PanTilt(pan=0, tilt=-27)
-        assert complete_state.most_recent_position_event.pitch == -13
+        assert complete_state.most_recent_position_event.pitch == -40
         assert complete_state.activity == turntable2.TurntableActivity.IDLE
         assert complete_state.activity_timeout_at is None
         assert complete_state.position_history_count == len(turntable.position_history())
         assert complete_state.position_history_generation == 1
         assert turntable.position_history()[-1] == turntable2.PositionSample(
             timestamp=complete_state.most_recent_position_event.timestamp,
-            internal_position=turntable2.YawPitch(yaw=15, pitch=-13),
+            internal_position=turntable2.YawPitch(yaw=15, pitch=-40),
             corrected_position=turntable2.PanTilt(pan=15, tilt=-40),
         )
-        assert any(sample.internal_position == turntable2.YawPitch(yaw=0, pitch=0) and sample.corrected_position == turntable2.PanTilt(pan=0, tilt=-27) for sample in turntable.position_history())
+        assert all(sample.internal_position.yaw == sample.corrected_position.pan for sample in turntable.position_history())
+        assert all(sample.internal_position.pitch == sample.corrected_position.tilt for sample in turntable.position_history())
         assert all(sample.internal_position != turntable2.YawPitch(yaw=4, pitch=2) for sample in turntable.position_history())
     finally:
         turntable.close()
@@ -181,7 +180,6 @@ def test_confirm_trusts_the_current_position_without_sending_set():
         assert state.state == turntable2.TurntableState.STOPPED
         assert state.has_been_set
         assert state.corrected_position == turntable2.PanTilt(4, 2)
-        assert state.regime_offset == turntable2.PanTilt(0, 0)
         assert not any(command.startswith(b"CMD:SET:") for command in fake.writes)
 
         turntable.move_to(pan=5, tilt=3)
@@ -204,11 +202,9 @@ def test_complete_state_describes_active_move_and_timeout():
 
         assert complete_state.state == turntable2.TurntableState.MOVING
         assert complete_state.activity == turntable2.TurntableActivity.MOVING
-        assert complete_state.activity_phase == "final"
+        assert complete_state.activity_phase == "direct"
         assert complete_state.uncorrected_position == turntable2.YawPitch(yaw=0, pitch=0)
         assert complete_state.corrected_position == turntable2.PanTilt(pan=0, tilt=0)
-        assert complete_state.current_regime.center_tilt == 0
-        assert complete_state.regime_offset == turntable2.PanTilt(pan=0, tilt=0)
         assert complete_state.most_recent_position_event.yaw == 0
         assert complete_state.most_recent_position_event.pitch == 0
         assert complete_state.activity_timeout_at.tzinfo is not None
@@ -227,7 +223,7 @@ def test_complete_state_describes_active_move_and_timeout():
         turntable.close()
 
 
-def test_regime_change_tracks_pan_and_tilt_offsets():
+def test_move_does_not_send_intermediate_move_or_set_commands():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake)
     try:
@@ -235,27 +231,23 @@ def test_regime_change_tracks_pan_and_tilt_offsets():
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
 
+        writes_before_move = len(fake.writes)
         turntable.move_to(pan=15, tilt=-40)
-        wait_for(lambda: b"CMD:MOV:0.000,-27.000;" in fake.writes)
-        # The firmware stopped just inside the accepted yaw margin before the
-        # regime-reset SET command. That residual becomes part of the offset.
-        fake.emit_internal_position(yaw=0.05, pitch=-27)
-        wait_for(lambda: b"CMD:MOV:14.950,-13.000;" in fake.writes)
+        wait_for(lambda: b"CMD:MOV:15.000,-40.000;" in fake.writes)
 
         complete_state = turntable.get_complete_state()
-        assert complete_state.current_regime.center_tilt == -27
-        assert complete_state.regime_offset == turntable2.PanTilt(pan=0.05, tilt=-27)
         assert complete_state.target_position == turntable2.PanTilt(pan=15, tilt=-40)
-        assert complete_state.internal_target == turntable2.YawPitch(yaw=14.95, pitch=-13)
+        assert complete_state.internal_target == turntable2.YawPitch(yaw=15, pitch=-40)
+        assert fake.writes[writes_before_move:] == [b"CMD:MOV:15.000,-40.000;"] * 3
     finally:
         turntable.close()
 
 
 @pytest.mark.parametrize(
-    ("destination", "final_wire_pitch"),
-    [(-90, -9), (45, 18)],
+    "destination",
+    [-90, 45],
 )
-def test_move_crosses_multiple_regimes(destination, final_wire_pitch):
+def test_move_uses_direct_coordinates_across_full_elevation_range(destination):
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
@@ -265,7 +257,7 @@ def test_move_crosses_multiple_regimes(destination, final_wire_pitch):
 
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED and turntable.current_position() == turntable2.PanTilt(12, destination))
 
-        expected_command = f"CMD:MOV:12.000,{final_wire_pitch:.3f};".encode()
+        expected_command = f"CMD:MOV:12.000,{destination:.3f};".encode()
         assert expected_command in fake.writes
     finally:
         turntable.close()
@@ -296,8 +288,6 @@ def test_nonzero_set_position_is_accepted_and_applied():
         assert b"CMD:SET:20.000,10.000;" in fake.writes
         state = turntable.get_complete_state()
         assert state.corrected_position == turntable2.PanTilt(20, 10)
-        assert state.current_regime == turntable2.TiltRegime(center_tilt=0, allowable_offset=29)
-        assert state.regime_offset == turntable2.PanTilt(0, 0)
     finally:
         turntable.close()
 

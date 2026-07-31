@@ -22,15 +22,12 @@ from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import parse_received_message
 from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.positions import YawPitch
-from anechoic_turntable.regimes import TILT_REGIMES
-from anechoic_turntable.regimes import TiltRegime
 from anechoic_turntable.serial_listener import SerialListener
 from anechoic_turntable.turntable import Turntable
 from anechoic_turntable.turntable import find
 
 __all__ = [
     "ALLOWABLE_DISCREPANCY_DEG",
-    "TILT_REGIMES",
     "CommandWrite",
     "ControllerThread",
     "PanTilt",
@@ -38,7 +35,6 @@ __all__ = [
     "ReceivedMessage",
     "ReceivedMessagePosition",
     "SerialListener",
-    "TiltRegime",
     "Turntable",
     "TurntableActivity",
     "TurntableCompleteState",

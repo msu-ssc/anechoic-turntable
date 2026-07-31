@@ -32,7 +32,7 @@ class ReceivedMessagePosition(ReceivedMessage):
 
     The firmware labels these values ``Az`` and ``El`` on the wire. Within
     ``turntable2`` they are called yaw and pitch to distinguish them from the
-    regime-compensated physical pan and tilt.
+    physical pan and tilt used by the public API.
     """
 
     kind: Literal["position"] = "position"

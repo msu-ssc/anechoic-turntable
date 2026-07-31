@@ -43,8 +43,8 @@ sends its ASCII argument exactly once without protocol or coordinate validation;
 it is for controlled firmware diagnostics only, and normal movement remains
 disabled until the position is set or confirmed again. Serial-port discovery
 runs in the background so the display remains responsive. The diagnostic panels
-show both corrected physical az/el and reported raw firmware az/el, the current
-tilt regime, az/el offsets, and the five most recent framed serial lines.
+show physical az/el, reported firmware az/el, and the five most recent framed
+serial lines.
 
 ## Development
 

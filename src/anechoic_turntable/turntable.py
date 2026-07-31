@@ -168,7 +168,7 @@ class Turntable:
         return self._controller.current_state()
 
     def current_position(self) -> PanTilt | None:
-        """Return the most recently reported, regime-compensated position."""
+        """Return the most recently reported physical position."""
 
         return self._controller.current_position()
 

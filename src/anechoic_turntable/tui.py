@@ -25,7 +25,6 @@ from anechoic_turntable.controller import TurntableError
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.positions import YawPitch
-from anechoic_turntable.regimes import TiltRegime
 from anechoic_turntable.session import CommandSyntaxError
 from anechoic_turntable.session import ConnectionResult
 from anechoic_turntable.session import NotConnectedError
@@ -135,10 +134,10 @@ class TurntableTui(App[None]):
                 yield Static("el: —", id="target-elevation", markup=False)
         with Horizontal(id="diagnostics"):
             with Vertical(classes="panel"):
-                yield Label("Regime", classes="panel-title")
-                yield Static("current: —", id="current-regime", markup=False)
-                yield Static("az offset: —", id="offset-azimuth", markup=False)
-                yield Static("el offset: —", id="offset-elevation", markup=False)
+                yield Label("Coordinates", classes="panel-title")
+                yield Static("mapping: direct", markup=False)
+                yield Static("az: yaw", markup=False)
+                yield Static("el: pitch", markup=False)
             yield Static(
                 "Controller\nactivity: —\ncommunication: —",
                 id="controller",
@@ -238,7 +237,6 @@ class TurntableTui(App[None]):
             self._update_position("azimuth", "elevation", None)
             self._update_position("reported-azimuth", "reported-elevation", None)
             self._update_position("target-azimuth", "target-elevation", None)
-            self._update_regime(None, None)
             self.query_one("#serial-output", Static).update("—")
             self.query_one("#controller", Static).update("Controller\nactivity: —\ncommunication: —")
             return
@@ -255,7 +253,6 @@ class TurntableTui(App[None]):
             "target-elevation",
             snapshot.target_position,
         )
-        self._update_regime(snapshot.current_regime, snapshot.regime_offset)
         self._update_serial_output(snapshot.recent_events)
 
         communication_age = snapshot.seconds_since_last_communication
@@ -391,16 +388,6 @@ class TurntableTui(App[None]):
             elevation = f"{position.pitch:.3f}°"
         self.query_one(f"#{azimuth_widget}", Static).update(f"az: {azimuth}")
         self.query_one(f"#{elevation_widget}", Static).update(f"el: {elevation}")
-
-    def _update_regime(self, regime: TiltRegime | None, offset: PanTilt | None) -> None:
-        self.query_one("#current-regime", Static).update(f"current: {regime if regime is not None else '—'}")
-        if offset is None:
-            azimuth = elevation = "—"
-        else:
-            azimuth = f"{offset.pan:.3f}°"
-            elevation = f"{offset.tilt:.3f}°"
-        self.query_one("#offset-azimuth", Static).update(f"az offset: {azimuth}")
-        self.query_one("#offset-elevation", Static).update(f"el offset: {elevation}")
 
     def _update_serial_output(self, events: tuple[ReceivedMessage, ...]) -> None:
         lines = [self._format_serial_line(event.message) for event in events[-5:]]

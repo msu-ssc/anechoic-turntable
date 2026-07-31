@@ -15,7 +15,7 @@ class YawPitch:
 
 @dataclasses.dataclass(frozen=True)
 class PanTilt:
-    """The regime-compensated physical position in degrees."""
+    """The physical position in degrees."""
 
     pan: float
     tilt: float

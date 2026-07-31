@@ -18,16 +18,12 @@ from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.positions import YawPitch
-from anechoic_turntable.regimes import TiltRegime
-from anechoic_turntable.regimes import find_best_regime
-from anechoic_turntable.regimes import find_next_regime
 from anechoic_turntable.serial_listener import SerialConnection
 
 ALLOWABLE_DISCREPANCY_DEG = 0.11
 ABSOLUTE_PAN_BOUNDS = (-180.0, 180.0)
 ABSOLUTE_TILT_BOUNDS = (-90.0, 45.0)
 SET_TILT_BOUNDS = (-90.0, 90.0)
-REGIME_PITCH_BOUNDS = (-29.5, 29.5)
 
 
 class TurntableError(Exception):
@@ -53,12 +49,11 @@ class TurntableActivity(str, enum.Enum):
     QUEUED = "queued"
     SETTING_POSITION = "setting_position"
     MOVING = "moving"
-    CHANGING_REGIME = "changing_regime"
 
 
 @dataclasses.dataclass(frozen=True)
 class PositionSample:
-    """One raw and regime-compensated position observed at the same time."""
+    """One firmware and physical position observed at the same time."""
 
     timestamp: datetime.datetime
     internal_position: YawPitch
@@ -83,8 +78,6 @@ class TurntableCompleteState:
     activity_phase: str | None
     uncorrected_position: YawPitch | None
     corrected_position: PanTilt | None
-    current_regime: TiltRegime | None
-    regime_offset: PanTilt | None
     most_recent_position_event: ReceivedMessagePosition | None
     most_recent_event: ReceivedMessage | None
     recent_events: tuple[ReceivedMessage, ...]
@@ -142,10 +135,7 @@ class _MoveOperation:
     tilt: float
     deadline: float
     timeout_at: datetime.datetime
-    phase: Literal["starting", "regime_move", "regime_set", "final"] = "starting"
-    internal_target: YawPitch | None = None
-    next_regime: TiltRegime | None = None
-    next_offset: PanTilt | None = None
+    internal_target: YawPitch
 
 
 _Operation = _SetOperation | _MoveOperation
@@ -192,8 +182,6 @@ class ControllerThread(threading.Thread):
         self._state = TurntableState.NOT_SET
         self._has_been_set = False
         self._set_requested = False
-        self._current_regime: TiltRegime | None = None
-        self._regime_offset: PanTilt | None = None
         self._internal_position: YawPitch | None = None
         self._corrected_position: PanTilt | None = None
         self._most_recent_communication = float("-inf")
@@ -239,8 +227,6 @@ class ControllerThread(threading.Thread):
 
             self._has_been_set = True
             self._set_requested = False
-            self._current_regime = find_best_regime(self._internal_position.pitch)
-            self._regime_offset = PanTilt(0.0, 0.0)
             self._corrected_position = PanTilt(
                 pan=self._internal_position.yaw,
                 tilt=self._internal_position.pitch,
@@ -318,8 +304,8 @@ class ControllerThread(threading.Thread):
                 target_position = PanTilt(operation.pan, operation.tilt)
                 internal_target = YawPitch(operation.pan, operation.tilt)
             elif isinstance(operation, _MoveOperation):
-                activity = TurntableActivity.CHANGING_REGIME if operation.phase in {"regime_move", "regime_set"} else TurntableActivity.MOVING
-                activity_phase = operation.phase
+                activity = TurntableActivity.MOVING
+                activity_phase = "direct"
                 timeout_at = operation.timeout_at
                 target_position = PanTilt(operation.pan, operation.tilt)
                 internal_target = operation.internal_target
@@ -339,8 +325,6 @@ class ControllerThread(threading.Thread):
                 activity_phase=activity_phase,
                 uncorrected_position=self._internal_position,
                 corrected_position=self._corrected_position,
-                current_regime=self._current_regime,
-                regime_offset=self._regime_offset,
                 most_recent_position_event=position_event,
                 most_recent_event=self._events[-1] if self._events else None,
                 recent_events=tuple(self._events)[-5:],
@@ -452,8 +436,10 @@ class ControllerThread(threading.Thread):
             self._most_recent_communication = time.monotonic()
             self._last_communication_at = event.timestamp
             self._internal_position = internal_position
-            offset = self._regime_offset or PanTilt(0.0, 0.0)
-            self._corrected_position = _apply_offset(internal_position, offset)
+            self._corrected_position = PanTilt(
+                pan=internal_position.yaw,
+                tilt=internal_position.pitch,
+            )
 
             if isinstance(self._operation, _SetOperation):
                 operation = self._operation
@@ -463,38 +449,18 @@ class ControllerThread(threading.Thread):
                 ):
                     self._has_been_set = True
                     self._set_requested = any(isinstance(command, _SetCommand) for command in self._queued_commands)
-                    self._current_regime = find_best_regime(operation.tilt)
-                    self._regime_offset = PanTilt(0.0, 0.0)
-                    self._corrected_position = PanTilt(internal_position.yaw, internal_position.pitch)
                     self._operation = None
                     self._state = TurntableState.MOVING if self._has_pending_commands() else TurntableState.STOPPED
             elif not isinstance(self._operation, _MoveOperation):
                 self._state = TurntableState.STOPPED if self._has_been_set else TurntableState.NOT_SET
             else:
                 operation = self._operation
-                if operation.internal_target is not None and _position_matches(
+                if _position_matches(
                     internal_position,
                     operation.internal_target,
                 ):
-                    if operation.phase == "regime_move":
-                        assert operation.next_regime is not None
-                        operation.next_offset = PanTilt(
-                            pan=internal_position.yaw + offset.pan,
-                            tilt=internal_position.pitch + offset.tilt,
-                        )
-                        operation.phase = "regime_set"
-                        operation.internal_target = YawPitch(0.0, 0.0)
-                        self._write_command(_format_set_command(yaw=0.0, pitch=0.0))
-                    elif operation.phase == "regime_set":
-                        assert operation.next_regime is not None
-                        assert operation.next_offset is not None
-                        self._regime_offset = operation.next_offset
-                        self._current_regime = operation.next_regime
-                        self._corrected_position = _apply_offset(internal_position, operation.next_offset)
-                        self._continue_move(operation)
-                    elif operation.phase == "final":
-                        self._operation = None
-                        self._state = TurntableState.MOVING if self._has_pending_commands() else TurntableState.STOPPED
+                    self._operation = None
+                    self._state = TurntableState.MOVING if self._has_pending_commands() else TurntableState.STOPPED
 
             assert self._corrected_position is not None
             self._position_history.append(
@@ -522,8 +488,6 @@ class ControllerThread(threading.Thread):
                     self._state = TurntableState.NO_COMMUNICATION
                     self._has_been_set = False
                     self._set_requested = False
-                    self._current_regime = None
-                    self._regime_offset = None
                     self._operation = None
                     self._invalidate_pending_commands()
                 return
@@ -561,8 +525,6 @@ class ControllerThread(threading.Thread):
             self._position_history_generation += 1
             self._has_been_set = False
             self._set_requested = False
-            self._current_regime = None
-            self._regime_offset = None
             self._corrected_position = None
             if self._state != TurntableState.NO_COMMUNICATION:
                 self._state = TurntableState.NOT_SET
@@ -587,7 +549,7 @@ class ControllerThread(threading.Thread):
         with self._lock:
             if command.generation != self._command_generation:
                 return
-            if not self._has_been_set or self._current_regime is None or self._regime_offset is None:
+            if not self._has_been_set:
                 self._last_error = TurntableError("The turntable position is not set")
                 self._state = TurntableState.ERROR
                 self._set_requested = False
@@ -598,40 +560,11 @@ class ControllerThread(threading.Thread):
                 tilt=command.tilt,
                 deadline=deadline,
                 timeout_at=timeout_at,
+                internal_target=YawPitch(yaw=command.pan, pitch=command.tilt),
             )
             self._operation = operation
             self._state = TurntableState.MOVING
-            self._continue_move(operation)
-
-    def _continue_move(self, operation: _MoveOperation) -> None:
-        with self._lock:
-            if self._operation is not operation:
-                return
-            current_regime = self._current_regime
-            offset = self._regime_offset
-            assert current_regime is not None
-            assert offset is not None
-
-            if operation.tilt not in current_regime:
-                next_regime = find_next_regime(
-                    destination_tilt=operation.tilt,
-                    current_regime=current_regime,
-                )
-                internal_yaw = -offset.pan
-                internal_pitch = next_regime.center_tilt - offset.tilt
-                _validate_regime_pitch(internal_pitch)
-                operation.phase = "regime_move"
-                operation.next_regime = next_regime
-                operation.internal_target = YawPitch(yaw=internal_yaw, pitch=internal_pitch)
-                self._write_command(_format_move_command(yaw=internal_yaw, pitch=internal_pitch))
-                return
-
-            internal_yaw = operation.pan - offset.pan
-            internal_pitch = operation.tilt - offset.tilt
-            _validate_regime_pitch(internal_pitch)
-            operation.phase = "final"
-            operation.internal_target = YawPitch(yaw=internal_yaw, pitch=internal_pitch)
-            self._write_command(_format_move_command(yaw=internal_yaw, pitch=internal_pitch))
+            self._write_command(_format_move_command(yaw=command.pan, pitch=command.tilt))
 
     def _write_command(self, command: bytes, *, repetitions: int | None = None) -> None:
         with self._lock:
@@ -694,20 +627,8 @@ def _validate_set_position(*, pan: float, tilt: float) -> None:
         raise ValueError(f"tilt must be within {SET_TILT_BOUNDS}")
 
 
-def _validate_regime_pitch(pitch: float) -> None:
-    if not REGIME_PITCH_BOUNDS[0] <= pitch <= REGIME_PITCH_BOUNDS[1]:
-        raise TurntableError(f"Internal pitch {pitch} is outside the safe regime bounds {REGIME_PITCH_BOUNDS}")
-
-
 def _position_matches(actual: YawPitch, expected: YawPitch) -> bool:
     return abs(actual.yaw - expected.yaw) <= ALLOWABLE_DISCREPANCY_DEG and abs(actual.pitch - expected.pitch) <= ALLOWABLE_DISCREPANCY_DEG
-
-
-def _apply_offset(position: YawPitch, offset: PanTilt) -> PanTilt:
-    return PanTilt(
-        pan=position.yaw + offset.pan,
-        tilt=position.pitch + offset.tilt,
-    )
 
 
 def _format_set_command(*, yaw: float, pitch: float) -> bytes:
