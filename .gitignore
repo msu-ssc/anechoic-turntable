@@ -1,3 +1,12 @@
+# BEGIN Project-specific ignores
+
+# Ignore this because it generates a pointless hash every time STM32CubeIDE builds the firmware
+firmware/.settings/language.settings.xml
+
+# END Project-specific ignores
+
+
+# BEGIN Standard ignores
 .venv/
 .pytest_cache/
 .ruff_cache/
@@ -13,3 +22,4 @@ build/
 dist/
 htmlcov/
 wheels/
+# END Standard ignores
