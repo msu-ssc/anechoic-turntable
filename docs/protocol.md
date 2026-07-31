@@ -1,4 +1,5 @@
 # Turntable Firmware–Controller Protocol Contract
+PROTOCOL_VERSION=2.0.0
 
 This document is the authoritative contract between the STM32 turntable
 firmware and the Python controller. If an implementation differs from this

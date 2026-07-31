@@ -62,3 +62,37 @@ Run every pre-commit check against the repository with:
 ```shell
 uv run pre-commit run --all-files
 ```
+
+## Versions and releases
+
+The repository tracks three independent semantic versions:
+
+- `CONTROLLER_VERSION` is the Python controller and package version. Its
+  canonical value is in `src/anechoic_turntable/_version.py`.
+- `PROTOCOL_VERSION` identifies the firmware–controller wire contract. Its
+  canonical declaration is at the top of `docs/protocol.md`.
+- `REFERENCE_FIRMWARE_VERSION` records the firmware version in the source tree
+  used to make a controller release. Its canonical definition is
+  `FIRMWARE_VERSION` in `firmware/Core/Inc/firmware_version.h`. A missing header
+  is recorded as the unknown version `0.0.0`.
+
+`__version__` is an alias for `CONTROLLER_VERSION`. The release workflow reads
+the canonical protocol and firmware values and copies them into the Python
+version module so an installed package exposes stable release-time snapshots
+without reading repository files at import time.
+
+Every pull request to `main` must have exactly one of `version:major`,
+`version:minor`, `version:patch`, or `version:no_bump`. After a versioned pull
+request is merged, release automation commits the generated version and
+changelog update directly to `main`, creates a tag such as
+`CONTROLLER_v1.2.3`, and creates the corresponding GitHub Release. This
+generated chore commit is the only exception to the rule against direct pushes
+to `main`.
+
+The controller follows [Semantic Versioning](https://semver.org/). At `1.0.0`
+and later, major releases contain incompatible changes, minor releases add
+backward-compatible functionality, and patch releases contain
+backward-compatible fixes. The normal compatibility guarantee does not apply
+to `0.Y.Z` development releases: breaking changes and new features increment
+the minor version, while backward-compatible bug fixes increment the patch
+version.

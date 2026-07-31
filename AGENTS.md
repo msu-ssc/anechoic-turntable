@@ -55,12 +55,26 @@ This repository owns device-level behavior and compatibility.
 ## Git and external-state rules
 
 - Never push directly to `main`.
+- The sole exception is the post-merge controller-release GitHub Action. It may
+  push its generated version/changelog chore commit and controller tag directly
+  to `main`. Humans and all other automation must still use pull requests.
 - Work on a feature branch and use a pull request when publication is requested.
 - Do not create or change remotes, publish a package, flash firmware, energize
   hardware, or operate the physical table unless the user explicitly requests
   that action.
 - Do not modify or delete neighboring repositories as part of work here.
 - Preserve unrelated working-tree changes.
+
+Every pull request to `main` must have exactly one controller-version label:
+
+- `version:major`;
+- `version:minor`;
+- `version:patch`; or
+- `version:no_bump`, which should be rare.
+
+While the controller is at version `0.Y.Z`, breaking changes and new features
+use `version:minor`, and backward-compatible bug fixes use `version:patch`.
+After `1.0.0`, use normal Semantic Versioning compatibility rules.
 
 ## Dependency management
 
@@ -153,6 +167,19 @@ Preserve these invariants:
 Python controller. It MUST be kept up to date. Any change to UART framing,
 commands, reports, coordinate semantics, repetition, timing, acknowledgements,
 or error behavior must update the contract in the same change.
+
+The `PROTOCOL_VERSION` declaration in `docs/protocol.md` is the canonical wire
+protocol version. Treat both the contract and its version as safety-critical:
+before changing either one, explicitly confirm with the user that the protocol
+contract and, when applicable, its version should change. Do not infer
+permission from an adjacent controller or firmware change.
+
+`src/anechoic_turntable/_version.py` is the canonical source for the controller
+version and contains release snapshots of the protocol and reference firmware
+versions. The post-merge release Action copies `PROTOCOL_VERSION` from the
+protocol contract and `FIRMWARE_VERSION` from
+`firmware/Core/Inc/firmware_version.h` into that module. If the firmware header
+is unavailable, the reference firmware snapshot is `0.0.0`.
 
 The current firmware uses STM32 USART1 at 9600 baud, 8 data bits, no parity, and
 one stop bit. Treat electrical assumptions and pin mappings as hardware facts
