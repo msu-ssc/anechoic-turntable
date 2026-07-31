@@ -85,9 +85,9 @@ Every pull request to `main` must have exactly one of `version:major`,
 `version:minor`, `version:patch`, or `version:no_bump`. After a versioned pull
 request is merged, release automation commits the generated version and
 changelog update directly to `main`, creates a tag such as
-`CONTROLLER_v1.2.3`, and creates the corresponding GitHub Release. This
-generated chore commit is the only exception to the rule against direct pushes
-to `main`.
+`CONTROLLER_v1.2.3`, and creates the corresponding GitHub Release with an
+installable wheel and source distribution attached. This generated chore commit
+is the only exception to the rule against direct pushes to `main`.
 
 The controller follows [Semantic Versioning](https://semver.org/). At `1.0.0`
 and later, major releases contain incompatible changes, minor releases add
