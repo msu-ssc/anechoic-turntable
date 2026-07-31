@@ -22,9 +22,8 @@ This contract specifies:
 - command repetition and completion behavior;
 - timeout and error expectations.
 
-Physical pan/tilt regime planning is controller behavior. The firmware operates
-only on the raw yaw/pitch coordinates carried in the historical wire fields
-named `Az` and `El`.
+The controller sends physical pan/tilt directly as the yaw/pitch coordinates in
+the historical wire fields named `Az` and `El`.
 
 ## Transport
 
@@ -54,13 +53,12 @@ The protocol carries raw firmware coordinates measured in degrees:
 - The `Az` field is called **yaw** inside the controller.
 - The `El` field is called **pitch** inside the controller.
 
-The controller's public API uses physical, regime-compensated **pan** and
-**tilt**. The diagnostic shell exposes those physical values as `az` and `el`.
-These operator-facing names do not change the raw wire semantics.
+The controller's public API uses physical **pan** and **tilt**. The diagnostic
+shell exposes those values as `az` and `el`. Pan and yaw are numerically equal,
+as are tilt and pitch.
 
-The firmware MUST treat command coordinates as raw yaw and pitch. It MUST NOT
-apply tilt regimes or physical coordinate offsets. The controller is solely
-responsible for converting between physical pan/tilt and raw yaw/pitch.
+The firmware MUST treat command coordinates as yaw and pitch. Neither firmware
+nor controller applies tilt regimes or physical coordinate offsets.
 
 ## Numeric encoding
 
@@ -107,7 +105,7 @@ Canonical examples:
 ```text
 CMD:SET:0.000,0.000;
 CMD:SET:20.000,10.000;
-CMD:MOV:15.000,-13.000;
+CMD:MOV:15.000,-40.000;
 ```
 
 A canonical command is shorter than 64 bytes. Firmware MUST safely reject and
@@ -145,9 +143,13 @@ The controller accepts physical move requests within:
 - pan: `[-180.0, 180.0]` degrees;
 - tilt: `[-90.0, 45.0]` degrees.
 
-Those are public controller bounds, not necessarily the raw values sent in an
-individual MOV during a tilt-regime transition. The controller constrains raw
-regime pitch targets to `[-29.5, 29.5]` degrees.
+The controller sends those requested values directly as yaw and pitch. Firmware
+used with this controller MUST represent the complete range without relying on
+controller-managed coordinate resets. The current compatible configuration
+uses TIM1 period `43200` with elevation zero at count `21600`.
+
+The bounds are inclusive. They do not provide margin against encoder-counter
+rollover if physical motion overshoots an exact representable endpoint.
 
 ### Immediate stop
 
@@ -170,7 +172,29 @@ The controller sends stop once when:
 - the interactive diagnostic shell disconnects from a live controller.
 
 Bytes such as `a`, `d`, `w`, and `s` that may be recognized by historical
-firmware are outside this contract. The controller MUST NOT send them.
+firmware are outside this contract. Normal controller operations MUST NOT send
+them.
+
+### Diagnostic raw writes
+
+The diagnostic TUI MAY expose an explicitly named `raw` operation for firmware
+development. This is an escape hatch from the normal command contract, not a
+new firmware command:
+
+- its ASCII payload is written exactly once without command, framing, or
+  coordinate validation;
+- it MUST use the controller's serialized write path rather than accessing the
+  serial connection directly;
+- it MUST wait behind any active tracked operation;
+- after the write, the controller MUST discard its trusted coordinate frame and
+  require SET or explicit position confirmation before another normal move;
+- it MUST NOT replace immediate abort, because a queued raw `p` is not an
+  immediate stop.
+
+An operator using `raw` is responsible for the complete payload, including any
+required semicolon. Unknown bytes and unsafe coordinate targets retain the
+firmware behavior described elsewhere in this contract; the controller provides
+no completion tracking for a raw command.
 
 ## Command repetition and idempotence
 
@@ -178,7 +202,7 @@ By default, the controller writes each SET and MOV frame three times. The
 copies may be adjacent with no delay:
 
 ```text
-CMD:MOV:15.000,-13.000;CMD:MOV:15.000,-13.000;CMD:MOV:15.000,-13.000;
+CMD:MOV:15.000,-40.000;CMD:MOV:15.000,-40.000;CMD:MOV:15.000,-40.000;
 ```
 
 Firmware MUST parse each semicolon-terminated frame independently and MUST
@@ -208,7 +232,7 @@ Canonical examples:
 
 ```text
 Pos= El: 0.00 , Az: 0.00 \r\n
-Pos= El: -13.00 , Az: 15.00 \r\n
+Pos= El: -40.00 , Az: 15.00 \r\n
 ```
 
 The spaces shown above are required. The firmware MUST transmit only the bytes
@@ -268,14 +292,9 @@ prefix.
 The controller serializes SET and MOV operations. It does not begin the next
 queued operation until position reports confirm the current operation.
 
-A tilt-regime transition can produce this sequence:
-
-1. MOV to a raw transition position.
-2. SET the raw position to `0.000,0.000`.
-3. MOV to the next raw target.
-
-Firmware MUST support this sequence without retaining hidden offsets or
-application-level regime state.
+Each normal move produces one MOV frame (repeated according to the configured
+repetition count) with the requested physical pan and tilt. The controller MUST
+NOT insert intermediate MOV or SET operations.
 
 Immediate stop is the exception to normal ordering and may be written while an
 operation is active.

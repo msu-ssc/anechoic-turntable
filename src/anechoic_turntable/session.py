@@ -171,6 +171,29 @@ class TurntableSession:
             raise TurntableError("confirmed position is unavailable")
         return position
 
+    def send_raw(self, command: str) -> None:
+        """Queue one exact ASCII diagnostic write on the current connection."""
+
+        with self._lock:
+            turntable = self._turntable
+        if turntable is None:
+            raise NotConnectedError("not connected")
+
+        try:
+            payload = command.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise ValueError("raw command must contain only ASCII characters") from exc
+        turntable.send_raw(payload)
+
+    def stop(self) -> None:
+        """Immediately stop the connected turntable and cancel queued work."""
+
+        with self._lock:
+            turntable = self._turntable
+        if turntable is None:
+            raise NotConnectedError("not connected")
+        turntable.abort()
+
     def close(self) -> tuple[str, ...]:
         """Invalidate discovery, then safely stop and close the connection."""
 

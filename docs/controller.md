@@ -26,15 +26,30 @@ with turntable2.find() as turntable:
 ```
 
 `set_position` and `move_to` queue work and return immediately. Commands are
-processed in order. `move_to` accepts physical pan and tilt angles and handles
-tilt-regime changes internally. `abort` is the exception: it immediately
+processed in order. `move_to` sends physical pan and tilt directly as firmware
+yaw and pitch. `abort` is the exception: it immediately
 invalidates the active operation and every queued command, writes the stop
 command, and returns only after that write has been attempted.
 
 `confirm_position()` is available when the firmware is already reporting a
 trusted position and sending SET would be undesirable. It adopts the current
-firmware yaw/pitch as physical pan/tilt, establishes the corresponding tilt
-regime, and sends no command to the hardware.
+firmware yaw/pitch as physical pan/tilt and sends no command to the hardware.
+
+Direct elevation commands require firmware configured with the expanded TIM1
+encoder period (`43200`) and center count (`21600`). Do not use this controller
+with the historical `14400`-period elevation firmware: a normal move outside
+that firmware's narrow representable range can wrap the counter. The accepted
+move limits remain inclusive, so motion beyond an exact endpoint can still
+roll over; endpoint-margin improvements are separate future work.
+
+`send_raw(payload)` is a diagnostic escape hatch that queues the supplied bytes
+for exactly one write through the controller's normal serialized writer. It
+does not validate framing, commands, or coordinate bounds. Because arbitrary
+bytes can move the table or change the firmware coordinate frame without a
+tracked controller operation, sending raw bytes clears the controller's trusted
+physical-coordinate state. A subsequent normal move requires `set_position()`
+or `confirm_position()` first. Use `abort()` rather than a raw `p` when an
+immediate stop is required: abort bypasses queued work, while raw writes do not.
 
 The web controller estimates move duration from the current and requested
 positions. When a move timeout is left blank, it uses
@@ -43,14 +58,17 @@ provided for an individual move.
 
 ## Coordinate terminology
 
-`turntable2` deliberately distinguishes two coordinate layers:
+`turntable2` retains separate names and types for the wire and public API:
 
-- **Yaw and pitch** are the relative numbers maintained and reported by the
+- **Yaw and pitch** are the numbers maintained and reported by the
   turntable firmware. A SET command declares them as the requested coordinates
   (pan from -180° through 180° and tilt from -90° through 90°). Raw
   `ReceivedMessagePosition` events therefore expose `yaw` and `pitch`.
-- **Pan and tilt** are physical, regime-compensated angles. Public command
-  arguments and `current_position()` use `pan` and `tilt`.
+- **Pan and tilt** are physical angles. Public command arguments and
+  `current_position()` use `pan` and `tilt`.
+
+There is no coordinate offset or elevation-regime conversion: pan equals yaw
+and tilt equals pitch.
 
 The firmware's USB command format is fixed and continues to place these values
 in its historical azimuth/elevation slots. That wire format does not change.
@@ -61,9 +79,10 @@ in its historical azimuth/elevation slots. That wire format does not change.
 under the controller lock. It includes:
 
 - `uncorrected_position`: the latest raw `YawPitch`;
-- `corrected_position`: the latest regime-compensated `PanTilt`;
-- `current_regime` and the two-axis `regime_offset`;
-- `most_recent_position_event` and `most_recent_event`;
+- `corrected_position`: the latest physical `PanTilt` (numerically equal to the
+  raw position);
+- `most_recent_position_event`, `most_recent_event`, and the five
+  `recent_events` used by live diagnostics;
 - `state`, `activity`, its detailed `activity_phase`, and `has_been_set`;
 - the active operation's corrected `target_position`, `internal_target`, and
   timezone-aware `activity_timeout_at`;
@@ -77,7 +96,6 @@ For example:
 snapshot = turntable.get_complete_state()
 print(f"firmware: {snapshot.uncorrected_position}")
 print(f"physical: {snapshot.corrected_position}")
-print(f"offset: {snapshot.regime_offset}")
 print(f"timeout: {snapshot.activity_timeout_at}")
 ```
 
@@ -85,7 +103,7 @@ The observable states are:
 
 - `NOT_SET`: communication is working, but the position has not been set.
 - `STOPPED`: the table has been set and is not moving.
-- `MOVING`: a move, including any tilt-regime transition, is active.
+- `MOVING`: a move is active.
 - `NO_COMMUNICATION`: no valid position has arrived before the communication
   timeout.
 - `TIMED_OUT`: a SET or MOV operation exceeded its deadline and was aborted.

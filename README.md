@@ -35,10 +35,16 @@ controller activity, start the terminal UI with:
 uv run anechoic-turntable-tui
 ```
 
-The command field accepts the same `connect`, `info`, `confirm`, `set`, `mov`,
-`help`, and `exit` commands as the interactive controller. `confirm` approves
-the currently reported azimuth and elevation without sending a SET command.
-Serial-port discovery runs in the background so the display remains responsive.
+The command field accepts `connect`, `info`, `confirm`, `set`, `mov`, `raw`,
+`stop`, `help`, and `exit`. `confirm` approves the currently reported azimuth
+and elevation without sending a SET command. `stop` and the red emergency-stop
+button immediately cancel queued work and send the firmware stop byte. `raw`
+sends its ASCII argument exactly once without protocol or coordinate validation;
+it is for controlled firmware diagnostics only, and normal movement remains
+disabled until the position is set or confirmed again. Serial-port discovery
+runs in the background so the display remains responsive. The diagnostic panels
+show physical az/el, reported firmware az/el, and the five most recent framed
+serial lines.
 
 ## Development
 

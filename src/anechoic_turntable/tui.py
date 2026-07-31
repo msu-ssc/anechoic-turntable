@@ -13,6 +13,7 @@ from textual.app import App
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical
+from textual.widgets import Button
 from textual.widgets import Footer
 from textual.widgets import Input
 from textual.widgets import Label
@@ -21,7 +22,9 @@ from textual.widgets import Static
 
 from anechoic_turntable.controller import TurntableCompleteState
 from anechoic_turntable.controller import TurntableError
+from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.positions import PanTilt
+from anechoic_turntable.positions import YawPitch
 from anechoic_turntable.session import CommandSyntaxError
 from anechoic_turntable.session import ConnectionResult
 from anechoic_turntable.session import NotConnectedError
@@ -29,7 +32,7 @@ from anechoic_turntable.session import TurntableSession
 from anechoic_turntable.session import parse_coordinates
 from anechoic_turntable.turntable import Turntable
 
-_COMMAND_HELP = "Commands: connect | info | confirm | set az=<number> el=<number> | mov az=<number> el=<number> | help | exit"
+_COMMAND_HELP = "Commands: connect | info | confirm | set az=<number> el=<number> | mov az=<number> el=<number> | raw <ASCII bytes> | stop | help | exit"
 
 
 class TurntableTui(App[None]):
@@ -46,6 +49,10 @@ class TurntableTui(App[None]):
         height: 8;
     }
 
+    #diagnostics {
+        height: 7;
+    }
+
     .panel {
         border: round $primary;
         padding: 0 1;
@@ -59,14 +66,31 @@ class TurntableTui(App[None]):
 
     #controller {
         border: round $primary;
-        height: 6;
         padding: 0 1;
+        width: 2fr;
+    }
+
+    #serial-panel {
+        border: round $primary;
+        height: 8;
+        padding: 0 1;
+    }
+
+    #serial-output {
+        height: 5;
+        overflow: hidden;
     }
 
     #messages {
         border: round $primary;
         height: 1fr;
         padding: 0 1;
+    }
+
+    #emergency-stop {
+        width: 100%;
+        height: 3;
+        text-style: bold;
     }
 
     #command {
@@ -97,18 +121,32 @@ class TurntableTui(App[None]):
                 yield Static("status: disconnected", id="connection", markup=False)
                 yield Static("port: —", id="port", markup=False)
             with Vertical(classes="panel"):
-                yield Label("Position", classes="panel-title")
+                yield Label("Physical position", classes="panel-title")
                 yield Static("az: —", id="azimuth", markup=False)
                 yield Static("el: —", id="elevation", markup=False)
+            with Vertical(classes="panel"):
+                yield Label("Reported position", classes="panel-title")
+                yield Static("az: —", id="reported-azimuth", markup=False)
+                yield Static("el: —", id="reported-elevation", markup=False)
             with Vertical(classes="panel"):
                 yield Label("Target", classes="panel-title")
                 yield Static("az: —", id="target-azimuth", markup=False)
                 yield Static("el: —", id="target-elevation", markup=False)
-        yield Static(
-            "Controller\nactivity: —\ncommunication: —",
-            id="controller",
-            markup=False,
-        )
+        with Horizontal(id="diagnostics"):
+            with Vertical(classes="panel"):
+                yield Label("Coordinates", classes="panel-title")
+                yield Static("mapping: direct", markup=False)
+                yield Static("az: yaw", markup=False)
+                yield Static("el: pitch", markup=False)
+            yield Static(
+                "Controller\nactivity: —\ncommunication: —",
+                id="controller",
+                markup=False,
+            )
+        yield Button("EMERGENCY STOP", id="emergency-stop", variant="error")
+        with Vertical(id="serial-panel"):
+            yield Label("Recent serial output", classes="panel-title")
+            yield Static("—", id="serial-output", markup=False)
         yield RichLog(id="messages", markup=False, wrap=True)
         yield Input(placeholder="command> mov az=15 el=0", id="command")
         yield Footer()
@@ -139,6 +177,12 @@ class TurntableTui(App[None]):
         if command_line:
             self.execute_command(command_line)
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle the emergency-stop button."""
+
+        if event.button.id == "emergency-stop":
+            self._stop_turntable()
+
     def execute_command(self, command_line: str) -> None:
         """Execute one diagnostic command without blocking on discovery."""
 
@@ -160,6 +204,12 @@ class TurntableTui(App[None]):
             self._confirm_position()
         elif command in {"set", "mov"}:
             self._queue_position(command, arguments)
+        elif command == "raw":
+            self._send_raw(arguments)
+        elif command == "stop":
+            if self._reject_arguments(command, arguments):
+                return
+            self._stop_turntable()
         elif command == "help":
             if self._reject_arguments(command, arguments):
                 return
@@ -185,17 +235,25 @@ class TurntableTui(App[None]):
         if snapshot is None:
             self.query_one("#connection", Static).update("status: disconnected")
             self._update_position("azimuth", "elevation", None)
+            self._update_position("reported-azimuth", "reported-elevation", None)
             self._update_position("target-azimuth", "target-elevation", None)
+            self.query_one("#serial-output", Static).update("—")
             self.query_one("#controller", Static).update("Controller\nactivity: —\ncommunication: —")
             return
 
         self.query_one("#connection", Static).update(f"status: {snapshot.state.value}")
         self._update_position("azimuth", "elevation", snapshot.corrected_position)
         self._update_position(
+            "reported-azimuth",
+            "reported-elevation",
+            snapshot.uncorrected_position,
+        )
+        self._update_position(
             "target-azimuth",
             "target-elevation",
             snapshot.target_position,
         )
+        self._update_serial_output(snapshot.recent_events)
 
         communication_age = snapshot.seconds_since_last_communication
         communication = "never" if math.isinf(communication_age) else f"{communication_age:.2f}s ago"
@@ -236,6 +294,27 @@ class TurntableTui(App[None]):
             self._write_message(f"error: {exc}")
             return
         self._write_message(f"{command} queued: az={coordinates.azimuth:.3f} el={coordinates.elevation:.3f}")
+        self.refresh_controller_state()
+
+    def _send_raw(self, command: str) -> None:
+        if not command:
+            self._write_message("error: expected: raw <ASCII bytes>")
+            return
+        try:
+            self._session.send_raw(command)
+        except (NotConnectedError, TurntableError, ValueError) as exc:
+            self._write_message(f"error: {exc}")
+            return
+        self._write_message(f"raw queued: {command}")
+        self.refresh_controller_state()
+
+    def _stop_turntable(self) -> None:
+        try:
+            self._session.stop()
+        except (NotConnectedError, TurntableError) as exc:
+            self._write_message(f"error: {exc}")
+            return
+        self._write_message("emergency stop sent")
         self.refresh_controller_state()
 
     def _write_info(self) -> None:
@@ -297,15 +376,27 @@ class TurntableTui(App[None]):
         self,
         azimuth_widget: str,
         elevation_widget: str,
-        position: PanTilt | None,
+        position: PanTilt | YawPitch | None,
     ) -> None:
         if position is None:
             azimuth = elevation = "—"
-        else:
+        elif isinstance(position, PanTilt):
             azimuth = f"{position.pan:.3f}°"
             elevation = f"{position.tilt:.3f}°"
+        else:
+            azimuth = f"{position.yaw:.3f}°"
+            elevation = f"{position.pitch:.3f}°"
         self.query_one(f"#{azimuth_widget}", Static).update(f"az: {azimuth}")
         self.query_one(f"#{elevation_widget}", Static).update(f"el: {elevation}")
+
+    def _update_serial_output(self, events: tuple[ReceivedMessage, ...]) -> None:
+        lines = [self._format_serial_line(event.message) for event in events[-5:]]
+        self.query_one("#serial-output", Static).update("\n".join(lines) if lines else "—")
+
+    @staticmethod
+    def _format_serial_line(message: bytes) -> str:
+        decoded = message.decode("ascii", errors="backslashreplace").rstrip("\r\n")
+        return "".join(character if character.isprintable() or character == "\t" else f"\\x{ord(character):02x}" for character in decoded)
 
 
 def main() -> None:
