@@ -1,3 +1,7 @@
+# This is modified almost every time STM32CubeIDE builds the software
+firmware/.settings/language.settings.xml
+
+# Standard git ignore things
 .venv/
 .pytest_cache/
 .ruff_cache/
