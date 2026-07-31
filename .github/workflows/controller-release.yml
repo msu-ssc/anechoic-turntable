@@ -111,6 +111,7 @@ jobs:
                 echo "Found an existing release commit without its controller tag."
                 exit 1
               fi
+              git checkout --detach "$EXISTING_COMMIT"
               echo "version=${EXISTING_TAG#CONTROLLER_v}" >> "$GITHUB_OUTPUT"
               echo "tag=$EXISTING_TAG" >> "$GITHUB_OUTPUT"
               exit 0
@@ -140,6 +141,35 @@ jobs:
           echo "Unable to push the controller release after five attempts."
           exit 1
 
+      - name: Install uv
+        if: steps.bump.outputs.type != 'no_bump'
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Build and smoke-test distributions
+        if: steps.bump.outputs.type != 'no_bump'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv build --no-sources
+
+          WHEEL="dist/anechoic_turntable-${VERSION}-py3-none-any.whl"
+          SDIST="dist/anechoic_turntable-${VERSION}.tar.gz"
+          test -f "$WHEEL"
+          test -f "$SDIST"
+
+          EXPECTED_VERSION="$VERSION" uv run --no-project --with "$WHEEL" -- python - <<'PY'
+          import importlib.metadata
+          import os
+
+          import anechoic_turntable
+
+          expected = os.environ["EXPECTED_VERSION"]
+          assert anechoic_turntable.__version__ == expected
+          assert importlib.metadata.version("anechoic-turntable") == expected
+          PY
+
       - name: Create GitHub Release
         if: steps.bump.outputs.type != 'no_bump'
         env:
@@ -157,9 +187,20 @@ jobs:
           } > "$RUNNER_TEMP/controller-release-notes.md"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "GitHub Release $TAG already exists; skipping."
+            EXISTING_ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+            for ASSET in dist/*.whl dist/*.tar.gz; do
+              ASSET_NAME="${ASSET##*/}"
+              if grep -Fxq "$ASSET_NAME" <<< "$EXISTING_ASSETS"; then
+                echo "Release asset $ASSET_NAME already exists; skipping."
+              else
+                gh release upload "$TAG" "$ASSET"
+              fi
+            done
           else
             gh release create "$TAG" \
               --title "$TAG" \
-              --notes-file "$RUNNER_TEMP/controller-release-notes.md"
+              --notes-file "$RUNNER_TEMP/controller-release-notes.md" \
+              --verify-tag \
+              dist/*.whl \
+              dist/*.tar.gz
           fi
