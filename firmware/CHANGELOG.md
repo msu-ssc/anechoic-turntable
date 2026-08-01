@@ -29,3 +29,7 @@ BUGFIX: Safely null-terminate completed command strings.
 ## 2.0.4 — 2026-07-31
 
 BUGFIX: Parse the complete pitch value instead of dropping its final character.
+
+## 2.0.5 — 2026-07-31
+
+BUGFIX: Reject malformed command frames instead of partially parsing them.

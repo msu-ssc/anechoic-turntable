@@ -169,33 +169,94 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 
-// Function to parse the input string and extract two float values
-bool parse_mov_command(const char *input, float *x, float *y) {
-    // Find the portion of the string after "CMD:MOV:"
-    const char *start = strstr(input, "CMD:MOV:");
-    if (start != NULL) {
-        // Move the pointer past "CMD:MOV:"
-        start += strlen("CMD:MOV:");
-        // The receive callback already removed the semicolon and null-terminated the command.
-        if (sscanf(start, "%f,%f", x, y) == 2) {
-            return true;  // Parsing successful
-        }
-    }
-    return false;  // Invalid format
+bool is_ascii_digit(char character) {
+    return character >= '0' && character <= '9';
 }
 
-bool parse_set_command(const char *input, float *x, float *y) {
-    // Find the portion of the string after "CMD:SET:"
-    const char *start = strstr(input, "CMD:SET:");
-    if (start != NULL) {
-        // Move the pointer past "CMD:SET:"
-        start += strlen("CMD:SET:");
-        // The receive callback already removed the semicolon and null-terminated the command.
-        if (sscanf(start, "%f,%f", x, y) == 2) {
-            return true;  // Parsing successful
+// Parse one v2 wire number and return the number of characters it consumed.
+// A negative return value means the number was malformed.
+int parse_wire_number(const char *text, float *parsed_value) {
+    int index = 0;
+    if (text[index] == '-') {
+        index++;
+    }
+
+    int integer_start = index;
+    while (is_ascii_digit(text[index])) {
+        index++;
+    }
+    if (index == integer_start) {
+        return -1;
+    }
+
+    // A decimal point is optional, but it must be followed by at least one digit.
+    if (text[index] == '.') {
+        index++;
+        int decimal_start = index;
+        while (is_ascii_digit(text[index])) {
+            index++;
+        }
+        if (index == decimal_start) {
+            return -1;
         }
     }
-    return false;  // Invalid format
+
+    float value = 0.0f;
+    int converted_length = 0;
+    // %n records how many characters sscanf consumed while parsing the float.
+    int converted_value_count = sscanf(text, "%f%n", &value, &converted_length);
+    if (converted_value_count != 1) {
+        return -1;
+    }
+    if (converted_length != index) {
+        return -1;
+    }
+    if (!isfinite(value)) {
+        return -1;
+    }
+
+    *parsed_value = value;
+    return index;
+}
+
+// Parse both coordinates from one complete command string.
+// expected_prefix distinguishes commands such as "CMD:MOV:" and "CMD:SET:".
+// Example input: "CMD:MOV:15.000,-40.000" (the receive callback removed the semicolon).
+bool parse_command_coordinates(const char *input, const char *expected_prefix, float *yaw, float *pitch) {
+    size_t prefix_length = strlen(expected_prefix);
+    // The prefix must appear at the very beginning of the command.
+    if (strncmp(input, expected_prefix, prefix_length) != 0) {
+        return false;
+    }
+
+    // Skip the prefix, parse yaw, and require a comma immediately afterward.
+    const char *coordinate_text = input + prefix_length;
+    float parsed_yaw = 0.0f;
+    int yaw_length = parse_wire_number(coordinate_text, &parsed_yaw);
+    if (yaw_length < 0 || coordinate_text[yaw_length] != ',') {
+        return false;
+    }
+
+    // Pitch begins after the comma and must consume the rest of the command.
+    const char *pitch_text = coordinate_text + yaw_length + 1;
+    float parsed_pitch = 0.0f;
+    int pitch_length = parse_wire_number(pitch_text, &parsed_pitch);
+    if (pitch_length < 0 || pitch_text[pitch_length] != '\0') {
+        return false;
+    }
+
+    // Do not expose partially parsed coordinates when any part of the command is invalid.
+    *yaw = parsed_yaw;
+    *pitch = parsed_pitch;
+    return true;
+}
+
+bool parse_mov_command(const char *input, float *yaw, float *pitch) {
+    return parse_command_coordinates(input, "CMD:MOV:", yaw, pitch);
+}
+
+bool parse_set_command(const char *input, float *yaw, float *pitch) {
+    return parse_command_coordinates(input, "CMD:SET:", yaw, pitch);
 }
 
 /* USER CODE END PV */
