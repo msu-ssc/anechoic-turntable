@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "firmware_version.h"
 #include "globalvars.h"
 #include <string.h>
 #include <stdio.h>
@@ -93,6 +94,7 @@ bool discarding_oversized_frame = false;
 // Incremented when the emergency-stop byte ('p') is received, allowing the
 // main loop to recognize and cancel a command copied before the stop.
 volatile uint32_t stop_generation = 0;
+static const char firmware_version_message[] = "MSG:VERSION:" FIRMWARE_VERSION ";\r\n";
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
@@ -330,7 +332,7 @@ void MYPROG_disable_el()
 	move_el = 0;
 }
 
-void MYPROG_SendData(char * data, int size)
+void MYPROG_SendData(const char * data, int size)
 {
 	 HAL_UART_Transmit(&huart1, (uint8_t *) data, size, 1000);
 }
@@ -385,6 +387,7 @@ void MYPROG_main_loop()
 		// These flags identify which supported command shape matched the private copy.
 		bool is_move_command = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
 		bool is_set_command = parse_set_command(command_to_process, &settimer1, &settimer2);
+		bool is_version_command = strcmp(command_to_process, "CMD:VERSION") == 0;
 		// Set when an emergency stop invalidates the command while it is being parsed.
 		bool command_cancelled = false;
 
@@ -397,32 +400,39 @@ void MYPROG_main_loop()
 		}
 		else
 		{
-			if (is_move_command)
+			if (!is_version_command)
 			{
-				Azc = move_yaw;
-				Elc = move_pitch;
-				move = 1;
-				mode = 0;
-			}
-			else
-			{
-				move = 0;
-			}
+				if (is_move_command)
+				{
+					Azc = move_yaw;
+					Elc = move_pitch;
+					move = 1;
+					mode = 0;
+				}
+				else
+				{
+					move = 0;
+				}
 
-			if (is_set_command)
-			{
-				TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f)); // elevation
-				TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f)); // azimuth
-			}
+				if (is_set_command)
+				{
+					TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f)); // elevation
+					TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f)); // azimuth
+				}
 
-			command_position_AZ = Azc;//(Azc*240)+21600;
-			command_position_EL = Elc;//(Elc*240)+21600;
-			Az_speed = 255;
-			El_speed = 255;
+				command_position_AZ = Azc;//(Azc*240)+21600;
+				command_position_EL = Elc;//(Elc*240)+21600;
+				Az_speed = 255;
+				El_speed = 255;
+			}
 		}
 		__enable_irq();
 
-		if (!command_cancelled)
+		if (!command_cancelled && is_version_command)
+		{
+			MYPROG_SendData(firmware_version_message, (int)sizeof(firmware_version_message) - 1);
+		}
+		else if (!command_cancelled)
 		{
 			// snprintf returns the message length without counting the final null byte.
 			int command_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "%.2f , %.2f \r\n", Azc, Elc);

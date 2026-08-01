@@ -16,6 +16,7 @@ from typing import overload
 
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessagePosition
+from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.positions import YawPitch
 from anechoic_turntable.serial_listener import SerialConnection
@@ -118,7 +119,12 @@ class _RawCommand:
     payload: bytes
 
 
-_Command = _SetCommand | _MoveCommand | _RawCommand
+@dataclasses.dataclass(frozen=True)
+class _VersionCommand:
+    generation: int
+
+
+_Command = _SetCommand | _MoveCommand | _RawCommand | _VersionCommand
 
 
 @dataclasses.dataclass
@@ -261,6 +267,13 @@ class ControllerThread(threading.Thread):
                 )
             )
 
+    def submit_version_request(self) -> None:
+        """Queue one firmware version request."""
+
+        with self._lock:
+            self._ensure_open()
+            self._command_queue.put(_VersionCommand(generation=self._command_generation))
+
     def submit_abort(self) -> None:
         """Immediately stop movement and invalidate all previously submitted work."""
 
@@ -347,6 +360,9 @@ class ControllerThread(threading.Thread):
     def most_recent_event(self, *, kind: Literal["position"]) -> ReceivedMessagePosition | None: ...
 
     @overload
+    def most_recent_event(self, *, kind: Literal["version"]) -> ReceivedMessageVersion | None: ...
+
+    @overload
     def most_recent_event(self, *, kind: Literal["other"]) -> ReceivedMessage | None: ...
 
     @overload
@@ -356,7 +372,7 @@ class ControllerThread(threading.Thread):
         with self._lock:
             if kind is None:
                 return self._events[-1] if self._events else None
-            if kind not in {"position", "other"}:
+            if kind not in {"position", "version", "other"}:
                 raise ValueError(f"Unknown event kind: {kind!r}")
             return self._most_recent_by_kind.get(kind)
 
@@ -511,8 +527,14 @@ class ControllerThread(threading.Thread):
                 self._begin_set(command)
             elif isinstance(command, _MoveCommand):
                 self._begin_move(command)
-            else:
+            elif isinstance(command, _RawCommand):
                 self._send_raw(command)
+            else:
+                self._send_version_request(command)
+
+    def _send_version_request(self, command: _VersionCommand) -> None:
+        if command.generation == self._command_generation:
+            self._write_command(b"CMD:VERSION;", repetitions=1)
 
     def _send_raw(self, command: _RawCommand) -> None:
         with self._lock:

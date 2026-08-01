@@ -1,5 +1,5 @@
 # Turntable Firmware–Controller Protocol Contract
-PROTOCOL_VERSION=2.0.0
+PROTOCOL_VERSION=2.1.0
 
 This document is the authoritative contract between the STM32 turntable
 firmware and the Python controller. If an implementation differs from this
@@ -18,7 +18,7 @@ This contract specifies:
 
 - the UART transport;
 - controller-to-firmware command frames;
-- firmware-to-controller position reports;
+- firmware-to-controller position and version reports;
 - raw coordinate semantics;
 - command repetition and completion behavior;
 - timeout and error expectations.
@@ -91,11 +91,13 @@ specified below.
 
 ## Controller-to-firmware frames
 
-SET and MOV are semicolon-terminated frames. They contain no spaces or newline:
+SET, MOV, and VERSION are semicolon-terminated frames. They contain no spaces
+or newline:
 
 ```text
 CMD:SET:<yaw>,<pitch>;
 CMD:MOV:<yaw>,<pitch>;
+CMD:VERSION;
 ```
 
 The terminating semicolon is part of the frame and MUST NOT be included in
@@ -107,6 +109,7 @@ Canonical examples:
 CMD:SET:0.000,0.000;
 CMD:SET:20.000,10.000;
 CMD:MOV:15.000,-40.000;
+CMD:VERSION;
 ```
 
 A canonical command is shorter than 64 bytes. Firmware MUST safely reject and
@@ -151,6 +154,13 @@ uses TIM1 period `43200` with elevation zero at count `21600`.
 
 The bounds are inclusive. They do not provide margin against encoder-counter
 rollover if physical motion overshoots an exact representable endpoint.
+
+### VERSION
+
+`CMD:VERSION;` requests the running firmware version. It MUST NOT change the
+coordinate reference, motion target, motor state, or reporting cadence. The
+firmware MUST respond once for every valid request with the version response
+specified below.
 
 ### Immediate stop
 
@@ -212,6 +222,32 @@ idempotent: it must not alter the meaning of the requested reference or target.
 
 The repetition count is controller-configurable and MUST NOT be used by
 firmware as part of framing or validation.
+
+The controller writes each VERSION request exactly once. Firmware MUST still
+treat repeated VERSION requests independently and return one response per
+request.
+
+## Firmware-to-controller version responses
+
+Firmware MUST answer a valid VERSION request with exactly one CRLF-terminated
+response:
+
+```text
+MSG:VERSION:<major>.<minor>.<patch>;\r\n
+```
+
+Each version component MUST be a non-negative decimal integer without leading
+zeroes, except that zero itself is encoded as `0`. Pre-release and build
+metadata are not part of this protocol. For example:
+
+```text
+MSG:VERSION:2.0.8;\r\n
+```
+
+The controller parses an exact conforming response as a version event.
+Malformed or otherwise non-matching lines remain diagnostic/other events. A
+version response does not count as a position report and therefore does not
+reset the communication timeout.
 
 ## Firmware-to-controller position reports
 

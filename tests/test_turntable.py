@@ -9,9 +9,10 @@ import anechoic_turntable as turntable2
 
 
 class FakeSerial:
-    def __init__(self, *, respond_to_moves=True, respond_to_sets=True):
+    def __init__(self, *, respond_to_moves=True, respond_to_sets=True, firmware_version="2.0.8"):
         self.respond_to_moves = respond_to_moves
         self.respond_to_sets = respond_to_sets
+        self.firmware_version = firmware_version
         self.writes = []
         self.closed = False
         self._input = bytearray()
@@ -39,6 +40,8 @@ class FakeSerial:
             coordinates = data.removeprefix(b"CMD:MOV:").removesuffix(b";")
             yaw, pitch = (float(value) for value in coordinates.split(b","))
             self.emit_internal_position(yaw=yaw, pitch=pitch)
+        elif data == b"CMD:VERSION;" and self.firmware_version is not None:
+            self.emit(f"MSG:VERSION:{self.firmware_version};\r\n".encode())
         return len(data)
 
     def close(self):
@@ -90,6 +93,30 @@ def test_non_position_input_becomes_an_other_event():
     assert type(event) is turntable2.ReceivedMessage
     assert event.kind == "other"
     assert event.message == b"garbage\r\n"
+
+
+def test_version_response_becomes_a_typed_event():
+    event = turntable2.parse_received_message(b"MSG:VERSION:2.0.8;\r\n")
+
+    assert isinstance(event, turntable2.ReceivedMessageVersion)
+    assert event.kind == "version"
+    assert event.version == "2.0.8"
+    assert hash(event)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        b"MSG:VERSION:2.0;\r\n",
+        b"MSG:VERSION:02.0.8;\r\n",
+        b"MSG:VERSION:+2.0.8;\r\n",
+        b"MSG:VERSION:2.0.8\r\n",
+        b"prefix MSG:VERSION:2.0.8;\r\n",
+        b"MSG:VERSION:2.0.8;\n",
+    ],
+)
+def test_malformed_version_response_becomes_an_other_event(message):
+    assert type(turntable2.parse_received_message(message)) is turntable2.ReceivedMessage
 
 
 def test_serial_listener_frames_fragmented_lines():
@@ -388,6 +415,29 @@ def test_raw_command_is_written_once_without_coordinate_validation():
         assert not state.has_been_set
         assert state.corrected_position is None
         assert state.position_history_generation == 2
+    finally:
+        turntable.close()
+
+
+def test_version_request_is_written_once_and_preserves_trusted_position():
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        writes_before_request = len(fake.writes)
+
+        turntable.request_version()
+
+        event = wait_for(lambda: turntable.most_recent_event(kind="version"))
+        assert isinstance(event, turntable2.ReceivedMessageVersion)
+        assert event.version == "2.0.8"
+        assert fake.writes[writes_before_request:] == [b"CMD:VERSION;"]
+        state = turntable.get_complete_state()
+        assert state.state == turntable2.TurntableState.STOPPED
+        assert state.has_been_set
+        assert state.corrected_position == turntable2.PanTilt(0, 0)
     finally:
         turntable.close()
 

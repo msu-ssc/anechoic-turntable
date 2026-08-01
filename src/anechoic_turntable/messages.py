@@ -11,6 +11,7 @@ from pydantic import ConfigDict
 from pydantic import Field
 
 _POSITION_PATTERN = re.compile(rb"Pos= El: (?P<pitch>-?\d{1,3}\.\d{2}) , Az: (?P<yaw>-?\d{1,3}\.\d{2})")
+_VERSION_PATTERN = re.compile(rb"MSG:VERSION:(?P<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*));\r\n\Z")
 
 
 def _utc_now() -> datetime.datetime:
@@ -22,7 +23,7 @@ class ReceivedMessage(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    kind: Literal["position", "other"] = "other"
+    kind: Literal["position", "version", "other"] = "other"
     message: bytes
     timestamp: datetime.datetime = Field(default_factory=_utc_now)
 
@@ -40,6 +41,13 @@ class ReceivedMessagePosition(ReceivedMessage):
     pitch: float | None = None
 
 
+class ReceivedMessageVersion(ReceivedMessage):
+    """A firmware semantic-version response."""
+
+    kind: Literal["version"] = "version"
+    version: str
+
+
 def parse_received_message(
     message: bytes,
     *,
@@ -48,6 +56,14 @@ def parse_received_message(
     """Parse one wire message into the smallest useful event."""
 
     timestamp = timestamp or _utc_now()
+    version_match = _VERSION_PATTERN.fullmatch(message)
+    if version_match is not None:
+        return ReceivedMessageVersion(
+            message=message,
+            timestamp=timestamp,
+            version=version_match.group("version").decode("ascii"),
+        )
+
     match = _POSITION_PATTERN.search(message)
     if match is None:
         return ReceivedMessage(message=message, timestamp=timestamp)
