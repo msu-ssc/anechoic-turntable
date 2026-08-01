@@ -319,7 +319,7 @@ class TurntableTui(App[None]):
                     with Horizontal(classes="operation-fields"):
                         yield Input(value="0", placeholder="az", id="move-az", type="number")
                         yield Input(value="0", placeholder="el", id="move-el", type="number")
-                        yield Input(value="120", placeholder="timeout", id="move-timeout", type="number")
+                        yield Input(value="300", placeholder="timeout", id="move-timeout", type="number")
                     with Horizontal(classes="operation-actions"):
                         yield Button("Move", id="move-submit", variant="primary")
                         yield Button("Go home", id="move-home")
