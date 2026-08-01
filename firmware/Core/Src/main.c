@@ -171,18 +171,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
 // Function to parse the input string and extract two float values
 bool parse_mov_command(const char *input, float *x, float *y) {
-    // Buffer to hold the part of the string with the numbers
-    char coordinates[20];
     // Find the portion of the string after "CMD:MOV:"
     const char *start = strstr(input, "CMD:MOV:");
     if (start != NULL) {
         // Move the pointer past "CMD:MOV:"
         start += strlen("CMD:MOV:");
-        // Copy the coordinates (before the semicolon)
-        strncpy(coordinates, start, strlen(start) - 1);
-        coordinates[strlen(start) - 1] = '\0';  // Null-terminate the string
-        // Use sscanf to parse the two float numbers
-        if (sscanf(coordinates, "%f,%f", x, y) == 2) {
+        // The receive callback already removed the semicolon and null-terminated the command.
+        if (sscanf(start, "%f,%f", x, y) == 2) {
             return true;  // Parsing successful
         }
     }
@@ -190,18 +185,13 @@ bool parse_mov_command(const char *input, float *x, float *y) {
 }
 
 bool parse_set_command(const char *input, float *x, float *y) {
-    // Buffer to hold the part of the string with the numbers
-    char coordinates[20];
-    // Find the portion of the string after "CMD:MOV:"
+    // Find the portion of the string after "CMD:SET:"
     const char *start = strstr(input, "CMD:SET:");
     if (start != NULL) {
-        // Move the pointer past "CMD:MOV:"
+        // Move the pointer past "CMD:SET:"
         start += strlen("CMD:SET:");
-        // Copy the coordinates (before the semicolon)
-        strncpy(coordinates, start, strlen(start) - 1);
-        coordinates[strlen(start) - 1] = '\0';  // Null-terminate the string
-        // Use sscanf to parse the two float numbers
-        if (sscanf(coordinates, "%f,%f", x, y) == 2) {
+        // The receive callback already removed the semicolon and null-terminated the command.
+        if (sscanf(start, "%f,%f", x, y) == 2) {
             return true;  // Parsing successful
         }
     }

@@ -25,3 +25,7 @@ BUGFIX: Reject oversized command frames without overflowing the receive buffer.
 ## 2.0.3 — 2026-07-31
 
 BUGFIX: Safely null-terminate completed command strings.
+
+## 2.0.4 — 2026-07-31
+
+BUGFIX: Parse the complete pitch value instead of dropping its final character.
