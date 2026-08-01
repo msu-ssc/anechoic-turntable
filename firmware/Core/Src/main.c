@@ -86,6 +86,7 @@ char rxBuffer_command[64];
 int buffn =0;
 int command_read =0;
 uint8_t buff;
+bool discarding_oversized_frame = false;
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
@@ -128,28 +129,35 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   }else
   {
 
-  if(buff != ';')
-  {
-	  rxBuffer[buffn] = buff;
-  	  command_read =0;
-  	  buffn ++;
-  	  buff =0;
-  }else if(buff == ';')
-  {	  memcpy(rxBuffer_command,rxBuffer,buffn);
-	  command_read =1;
-	  buffn =0;
-	  memset(rxBuffer, 0, sizeof(rxBuffer));
-	  buff = 0;
-  }
-
-  if(buffn>64)
-  {
-	  buffn=0;
-	  memset(rxBuffer, 0, sizeof(rxBuffer));
-	  command_read = -1;
-	  buff = 0;
-
-  }
+	  if (discarding_oversized_frame)
+	  {
+		  // The frame is already invalid. Ignore it until its terminating semicolon.
+		  if (buff == ';')
+		  {
+			  discarding_oversized_frame = false;
+		  }
+	  }
+	  else if (buff == ';')
+	  {
+		  memcpy(rxBuffer_command, rxBuffer, buffn);
+		  command_read = 1;
+		  buffn = 0;
+		  memset(rxBuffer, 0, sizeof(rxBuffer));
+	  }
+	  else if (buffn >= (int)sizeof(rxBuffer))
+	  {
+		  // Check before writing so an oversized frame cannot overflow rxBuffer.
+		  buffn = 0;
+		  memset(rxBuffer, 0, sizeof(rxBuffer));
+		  command_read = -1;
+		  discarding_oversized_frame = true;
+	  }
+	  else
+	  {
+		  rxBuffer[buffn] = buff;
+		  command_read = 0;
+		  buffn++;
+	  }
 
   }
   buff = 0;
