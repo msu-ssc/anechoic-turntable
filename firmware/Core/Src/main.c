@@ -424,8 +424,13 @@ void MYPROG_main_loop()
 
 		if (!command_cancelled)
 		{
-			snprintf(sendbuffer,42,"%.2f , %.2f \r\n",Azc,Elc);
-			MYPROG_SendData(sendbuffer,42);
+			// snprintf returns the message length without counting the final null byte.
+			int command_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "%.2f , %.2f \r\n", Azc, Elc);
+			// A length as large as the buffer means snprintf had to truncate the message.
+			if (command_message_length > 0 && command_message_length < (int)sizeof(sendbuffer))
+			{
+				MYPROG_SendData(sendbuffer, command_message_length);
+			}
 		}
 	}
 
@@ -448,8 +453,12 @@ void MYPROG_main_loop()
 
 
 
-	snprintf(sendbuffer,42,"Pos= El: %.2f , Az: %.2f \r\n",El_pos_deg,Az_pos_deg);
-	MYPROG_SendData(sendbuffer,42);
+	// Example: send through the report's \n, but not the unused remainder of sendbuffer.
+	int position_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "Pos= El: %.2f , Az: %.2f \r\n", El_pos_deg, Az_pos_deg);
+	if (position_message_length > 0 && position_message_length < (int)sizeof(sendbuffer))
+	{
+		MYPROG_SendData(sendbuffer, position_message_length);
+	}
 
 
 	//MYPROG_SendData(rxBuffer_command,64);

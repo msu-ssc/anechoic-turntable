@@ -41,3 +41,7 @@ BUGFIX: Clear partial and pending commands when receiving an immediate stop.
 ## 2.0.7 — 2026-07-31
 
 BUGFIX: Prevent UART interrupts from overwriting commands while they are processed.
+
+## 2.0.8 — 2026-07-31
+
+BUGFIX: Transmit only the formatted bytes in firmware messages.

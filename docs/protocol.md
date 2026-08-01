@@ -320,14 +320,7 @@ These are known differences between the authoritative contract and the current
 firmware implementation. They are defects or technical debt, not protocol
 features that future implementations should preserve.
 
-1. The UART receive callback removes the semicolon before storing a command,
-   while `parse_set_command()` and `parse_mov_command()` also subtract one
-   character as if the semicolon were still present. This can discard the last
-   character of the pitch value.
-2. Firmware transmit calls currently send a fixed 42-byte buffer for both
-   position and diagnostic output rather than the actual formatted length. This
-   can append NUL or stale bytes after a CRLF-terminated line.
-3. Historical single-character manual-control inputs (`a`, `d`, `w`, and `s`)
+1. Historical single-character manual-control inputs (`a`, `d`, `w`, and `s`)
    are recognized by firmware but are not part of the controller protocol.
 
 Compatibility tests should be added when these deviations are corrected so
