@@ -19,6 +19,7 @@ from anechoic_turntable.controller import TurntableError
 from anechoic_turntable.controller import TurntableState
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessagePosition
+from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.serial_listener import SerialConnection
 from anechoic_turntable.serial_listener import SerialListener
@@ -159,6 +160,11 @@ class Turntable:
 
         self._controller.submit_raw(payload)
 
+    def request_version(self) -> None:
+        """Queue one firmware version request and return immediately."""
+
+        self._controller.submit_version_request()
+
     def abort(self) -> None:
         """Immediately stop movement and invalidate all queued commands."""
 
@@ -179,6 +185,9 @@ class Turntable:
 
     @overload
     def most_recent_event(self, *, kind: Literal["position"]) -> ReceivedMessagePosition | None: ...
+
+    @overload
+    def most_recent_event(self, *, kind: Literal["version"]) -> ReceivedMessageVersion | None: ...
 
     @overload
     def most_recent_event(self, *, kind: Literal["other"]) -> ReceivedMessage | None: ...

@@ -34,6 +34,12 @@ was made; they do not report the firmware actually installed on a connected
 turntable. `__version__` is an alias for `CONTROLLER_VERSION` and matches the
 installed Python distribution version.
 
+`request_version()` queues `CMD:VERSION;` once and returns immediately without
+changing trusted position state. The corresponding exact firmware response is
+available as `most_recent_event(kind="version")`, a
+`ReceivedMessageVersion` whose `version` field contains the semantic version.
+Version responses do not count as position communication for timeout purposes.
+
 `set_position` and `move_to` queue work and return immediately. Commands are
 processed in order. `move_to` sends physical pan and tilt directly as firmware
 yaw and pitch. `abort` is the exception: it immediately
@@ -121,6 +127,7 @@ The observable states are:
 
 Every received line becomes an immutable, hashable `ReceivedMessage`.
 Successfully parsed position lines become `ReceivedMessagePosition` events.
+Exact firmware version responses become `ReceivedMessageVersion` events.
 These events intentionally preserve raw firmware yaw and pitch. Use
 `current_position()` or `get_complete_state().corrected_position` for physical
 pan and tilt.

@@ -52,3 +52,12 @@ def test_firmware_build_preserves_unoptimized_profile() -> None:
     assert " -O3 " not in compile_rules
     assert " -Os " not in compile_rules
     assert "-fcyclomatic-complexity" not in compile_rules
+
+
+def test_firmware_version_command_uses_canonical_version_header() -> None:
+    """The firmware reports its canonical version for the exact VERSION command."""
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert '#include "firmware_version.h"' in main_source
+    assert 'strcmp(command_to_process, "CMD:VERSION") == 0' in main_source
+    assert '"MSG:VERSION:" FIRMWARE_VERSION ";\\r\\n"' in main_source

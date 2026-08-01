@@ -23,6 +23,7 @@ from anechoic_turntable.controller import TurntableError
 from anechoic_turntable.controller import TurntableState
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessagePosition
+from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.messages import parse_received_message
 from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.positions import YawPitch
@@ -41,6 +42,7 @@ __all__ = [
     "PositionSample",
     "ReceivedMessage",
     "ReceivedMessagePosition",
+    "ReceivedMessageVersion",
     "SerialListener",
     "Turntable",
     "TurntableActivity",

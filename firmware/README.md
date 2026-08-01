@@ -43,6 +43,6 @@ firmware release commit and publishes:
 - artifact `turntable_firmware_<version>.elf`;
 - artifact `turntable_firmware_<version>.elf.sha256`.
 
-The firmware version is not currently embedded in the executable. Release
-provenance therefore comes from the tag, release commit, asset name, and
-checksum.
+The firmware includes this version in the executable and reports it in response
+to `CMD:VERSION;` as `MSG:VERSION:<version>;` followed by CRLF. Release
+provenance also includes the tag, release commit, asset name, and checksum.
