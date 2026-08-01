@@ -21,3 +21,15 @@ Add support for the `CMD:VERSION?` command
 ## 0.4.0 — 2026-08-01
 
 Add version command to protocol
+
+## 0.5.0 — 2026-08-01
+
+Removed REPL
+
+Made several backwards compatible changes to the controller TUI:
+- Redesigned layout with panels.
+- Removed redundant clutter.
+- Added Raw and filterable Parsed event streams for received messages.
+- Added command output and exact transmitted-byte history.
+- Added dedicated Move and Set controls
+- Surfaced timeout inputs for commands
