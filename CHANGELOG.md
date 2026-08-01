@@ -17,3 +17,7 @@ Remove build artifact from git tracking
 ## 0.3.0 — 2026-08-01
 
 Add support for the `CMD:VERSION?` command
+
+## 0.4.0 — 2026-08-01
+
+Add version command to protocol
