@@ -127,6 +127,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	  buff =0;
 	  MYPROG_disable_az();
 	  MYPROG_disable_el();
+
+	  // Example: after "CMD:MOV:10.000p", the bytes before p must not be reused.
+	  buffn = 0;
+	  memset(rxBuffer, 0, sizeof(rxBuffer));
+	  memset(rxBuffer_command, 0, sizeof(rxBuffer_command));
+	  discarding_oversized_frame = false;
   }else
   {
 

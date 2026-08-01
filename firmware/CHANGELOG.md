@@ -33,3 +33,7 @@ BUGFIX: Parse the complete pitch value instead of dropping its final character.
 ## 2.0.5 — 2026-07-31
 
 BUGFIX: Reject malformed command frames instead of partially parsing them.
+
+## 2.0.6 — 2026-07-31
+
+BUGFIX: Clear partial and pending commands when receiving an immediate stop.
