@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import importlib.util
+import re
 from pathlib import Path
 from types import ModuleType
 
@@ -37,9 +38,9 @@ def test_protocol_snapshot_matches_canonical_contract() -> None:
     assert release_version.read_protocol_version(REPOSITORY_ROOT) == anechoic_turntable.PROTOCOL_VERSION
 
 
-def test_reference_firmware_snapshot_matches_available_header() -> None:
-    """The firmware snapshot matches the header or its documented unknown fallback."""
-    assert release_version.read_reference_firmware_version(REPOSITORY_ROOT) == anechoic_turntable.REFERENCE_FIRMWARE_VERSION
+def test_reference_firmware_snapshot_is_a_release_version() -> None:
+    """The installed controller exposes a stable semantic firmware snapshot."""
+    assert re.fullmatch(release_version.SEMVER_TEXT, anechoic_turntable.REFERENCE_FIRMWARE_VERSION)
 
 
 @pytest.mark.parametrize(
@@ -98,3 +99,43 @@ def test_append_changelog_entry_preserves_existing_history(tmp_path: Path) -> No
     release_version.append_changelog_entry(changelog, "1.2.3", "2026-07-31", "Useful change\n")
 
     assert changelog.read_text(encoding="utf-8") == ("# Changelog\n\nEarlier history.\n\n## 1.2.3 — 2026-07-31\n\nUseful change\n")
+
+
+def test_prepare_firmware_release_updates_header_and_changelog(tmp_path: Path) -> None:
+    """A firmware release bumps its canonical header and appends its own history."""
+    firmware_header = tmp_path / release_version.FIRMWARE_VERSION_HEADER
+    firmware_header.parent.mkdir(parents=True)
+    firmware_header.write_text(
+        '#ifndef FIRMWARE_VERSION_H\n#define FIRMWARE_VERSION_H\n\n#define FIRMWARE_VERSION "2.3.4"\n\n#endif\n',
+        encoding="utf-8",
+    )
+    firmware_changelog = tmp_path / release_version.FIRMWARE_CHANGELOG
+    firmware_changelog.write_text("# Changelog\n\nEarlier firmware.\n", encoding="utf-8")
+
+    version = release_version.prepare_firmware_release(tmp_path, "minor", "2026-08-01", "Safer movement")
+
+    assert version == "2.4.0"
+    assert '#define FIRMWARE_VERSION "2.4.0"' in firmware_header.read_text(encoding="utf-8")
+    assert firmware_changelog.read_text(encoding="utf-8") == ("# Changelog\n\nEarlier firmware.\n\n## 2.4.0 — 2026-08-01\n\nSafer movement\n")
+
+
+def test_prepare_controller_release_snapshots_new_firmware_version(tmp_path: Path) -> None:
+    """A controller release prepared after firmware captures the new firmware version."""
+    version_module = tmp_path / release_version.VERSION_MODULE
+    version_module.parent.mkdir(parents=True)
+    version_module.write_text(
+        'CONTROLLER_VERSION = "0.2.1"\nPROTOCOL_VERSION = "1.0.0"\nREFERENCE_FIRMWARE_VERSION = "2.0.7"\n__version__ = CONTROLLER_VERSION\n',
+        encoding="utf-8",
+    )
+    protocol_document = tmp_path / release_version.PROTOCOL_DOCUMENT
+    protocol_document.parent.mkdir(parents=True)
+    protocol_document.write_text("PROTOCOL_VERSION=2.0.0\n", encoding="utf-8")
+    firmware_header = tmp_path / release_version.FIRMWARE_VERSION_HEADER
+    firmware_header.parent.mkdir(parents=True)
+    firmware_header.write_text('#define FIRMWARE_VERSION "2.1.0"\n', encoding="utf-8")
+    (tmp_path / release_version.CONTROLLER_CHANGELOG).write_text("# Changelog\n", encoding="utf-8")
+
+    version = release_version.prepare_controller_release(tmp_path, "patch", "2026-08-01", "Compatibility snapshot")
+
+    assert version == "0.2.2"
+    assert 'REFERENCE_FIRMWARE_VERSION = "2.1.0"' in version_module.read_text(encoding="utf-8")
