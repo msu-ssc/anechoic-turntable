@@ -45,3 +45,7 @@ BUGFIX: Prevent UART interrupts from overwriting commands while they are process
 ## 2.0.8 — 2026-07-31
 
 BUGFIX: Transmit only the formatted bytes in firmware messages.
+
+## 2.1.0 — 2026-08-01
+
+Add support for the `CMD:VERSION?` command
