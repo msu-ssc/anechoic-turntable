@@ -13,3 +13,7 @@ Create automation to include Python wheel as part of release pipeline
 ## 0.2.1 — 2026-07-31
 
 Remove build artifact from git tracking
+
+## 0.3.0 — 2026-08-01
+
+Add support for the `CMD:VERSION?` command
