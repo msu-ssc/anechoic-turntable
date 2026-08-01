@@ -85,9 +85,14 @@ char rxBuffer[64];
 // Completed commands are C strings, so they need one extra byte for the null terminator.
 char rxBuffer_command[sizeof(rxBuffer) + 1];
 int buffn =0;
-int command_read =0;
+// Indicates whether rxBuffer_command contains a command waiting for the main loop.
+// volatile tells the compiler that the UART interrupt can change this value at any time.
+volatile int command_read =0;
 uint8_t buff;
 bool discarding_oversized_frame = false;
+// Incremented when the emergency-stop byte ('p') is received, allowing the
+// main loop to recognize and cancel a command copied before the stop.
+volatile uint32_t stop_generation = 0;
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
@@ -122,6 +127,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   }else if (buff == 'p')
   {
 	  command_read =0;
+	  stop_generation++;
 	  move = 0;
 	  mode = 0;
 	  buff =0;
@@ -146,9 +152,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	  }
 	  else if (buff == ';')
 	  {
-		  memcpy(rxBuffer_command, rxBuffer, buffn);
-		  rxBuffer_command[buffn] = '\0';
-		  command_read = 1;
+		  // Keep the existing command until the main loop has copied it.
+		  if (command_read != 1)
+		  {
+			  memcpy(rxBuffer_command, rxBuffer, buffn);
+			  rxBuffer_command[buffn] = '\0';
+			  command_read = 1;
+		  }
 		  buffn = 0;
 		  memset(rxBuffer, 0, sizeof(rxBuffer));
 	  }
@@ -157,13 +167,15 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 		  // Check before writing so an oversized frame cannot overflow rxBuffer.
 		  buffn = 0;
 		  memset(rxBuffer, 0, sizeof(rxBuffer));
-		  command_read = -1;
+		  if (command_read != 1)
+		  {
+			  command_read = -1;
+		  }
 		  discarding_oversized_frame = true;
 	  }
 	  else
 	  {
 		  rxBuffer[buffn] = buff;
-		  command_read = 0;
 		  buffn++;
 	  }
 
@@ -333,6 +345,13 @@ void MYPROG_main_loop()
 	float settimer1 =0;
 	float settimer2 =0;
 	char sendbuffer[42];
+	// Private command copy used by the main loop after releasing the shared UART buffer.
+	char command_to_process[sizeof(rxBuffer_command)];
+	// True only when command_to_process contains a command to parse during this loop.
+	bool command_available = false;
+	// Snapshot used to detect an emergency stop received after the command was copied.
+	// Example: if this is 4 and stop_generation becomes 5, the copied command is cancelled.
+	uint32_t copied_stop_generation = 0;
 
 
 
@@ -345,37 +364,69 @@ void MYPROG_main_loop()
 	MYPROG_Delay(5);
 	//MYPROG_SendData("ACK\n",3);
 
-	if(command_read ==1)
+	// Briefly pause UART interrupts while copying the shared command buffer.
+	// Example: the ISR can now receive the next frame while this private copy is parsed.
+	__disable_irq();
+	if (command_read == 1)
+	{
+		memcpy(command_to_process, rxBuffer_command, sizeof(command_to_process));
+		command_read = 0;
+		copied_stop_generation = stop_generation;
+		command_available = true;
+	}
+	__enable_irq();
+
+	if(command_available)
 	{
 		//MYPROG_SendData("read command",10);
+		// Keep parsed movement coordinates local until the complete command can be applied safely.
+		float move_yaw = 0.0f;
+		float move_pitch = 0.0f;
+		// These flags identify which supported command shape matched the private copy.
+		bool is_move_command = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
+		bool is_set_command = parse_set_command(command_to_process, &settimer1, &settimer2);
+		// Set when an emergency stop invalidates the command while it is being parsed.
+		bool command_cancelled = false;
 
-		if(parse_mov_command(rxBuffer_command,&Azc,&Elc))
+		// Parsing happens with interrupts enabled. Pause them again only while applying
+		// the result, and first make sure p was not received during parsing.
+		__disable_irq();
+		if (copied_stop_generation != stop_generation)
 		{
-			move = 1;
-			mode = 0;
-
-		}else{
-			move = 0;
+			command_cancelled = true;
 		}
-
-		if(parse_set_command(rxBuffer_command,&settimer1,&settimer2))
+		else
 		{
-			TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f)); // elevation
-			TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f)); // azimuth
+			if (is_move_command)
+			{
+				Azc = move_yaw;
+				Elc = move_pitch;
+				move = 1;
+				mode = 0;
+			}
+			else
+			{
+				move = 0;
+			}
+
+			if (is_set_command)
+			{
+				TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f)); // elevation
+				TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f)); // azimuth
+			}
+
+			command_position_AZ = Azc;//(Azc*240)+21600;
+			command_position_EL = Elc;//(Elc*240)+21600;
+			Az_speed = 255;
+			El_speed = 255;
 		}
-		//ftoa();
-		Azc = Azc;
-		Elc = Elc;
-		snprintf(sendbuffer,42,"%.2f , %.2f \r\n",Azc,Elc);
+		__enable_irq();
 
-		MYPROG_SendData(sendbuffer,42);
-		command_read =0;
-
-		command_position_AZ = Azc;//(Azc*240)+21600;
-		command_position_EL = Elc;//(Elc*240)+21600;
-
-		Az_speed = 255;
-		El_speed = 255;
+		if (!command_cancelled)
+		{
+			snprintf(sendbuffer,42,"%.2f , %.2f \r\n",Azc,Elc);
+			MYPROG_SendData(sendbuffer,42);
+		}
 	}
 
 	int target_reached = move_az && move_el;
