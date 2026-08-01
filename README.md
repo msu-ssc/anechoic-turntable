@@ -15,36 +15,29 @@ authoritative source for UART framing, commands, reports, coordinate semantics,
 and compatibility behavior. It must be kept up to date whenever firmware or
 controller protocol behavior changes.
 
-## Interactive controller
+## Terminal controller
 
-Start the minimal interactive controller with:
-
-```shell
-uv run anechoic-turntable
-```
-
-Type `help` at the prompt to see the supported commands. `connect` discovers the
-turntable on an available serial port. Azimuth maps to physical pan and
-elevation maps to physical tilt. Reconnecting, exiting, EOF, and Ctrl-C send the
-stop command before closing the serial connection.
-
-For an auto-updating view of connection state, physical position, target, and
-controller activity, start the terminal UI with:
+Start the terminal UI with:
 
 ```shell
 uv run anechoic-turntable-tui
 ```
 
-The command field accepts `connect`, `info`, `confirm`, `set`, `mov`, `raw`,
-`stop`, `help`, and `exit`. `confirm` approves the currently reported azimuth
-and elevation without sending a SET command. `stop` and the red emergency-stop
-button immediately cancel queued work and send the firmware stop byte. `raw`
-sends its ASCII argument exactly once without protocol or coordinate validation;
-it is for controlled firmware diagnostics only, and normal movement remains
-disabled until the position is set or confirmed again. Serial-port discovery
-runs in the background so the display remains responsive. The diagnostic panels
-show physical az/el, reported firmware az/el, and the five most recent framed
-serial lines.
+The Move and Set sections provide azimuth, elevation, and timeout inputs. Go
+home moves to azimuth 0° and elevation 0° with a 240-second timeout; Confirm
+approves the currently reported position without sending a SET command. The Raw
+and Parsed panels show received serial events, with a message-type filter for
+the parsed stream. The Commands panel shows both operator/controller output and
+the exact bytes written to the serial connection.
+
+The command field also accepts `connect`, `info`, `confirm`, `set`, `mov`,
+`raw`, `stop`, `help`, and `exit`. `stop` and the red emergency-stop button
+immediately cancel queued work and send the firmware stop byte. `raw` sends its
+ASCII argument exactly once without protocol or coordinate validation; it is
+for controlled firmware diagnostics only, and normal movement remains disabled
+until the position is set or confirmed again. Serial-port discovery runs in the
+background so the display remains responsive. Closing the TUI attempts a safe
+stop before closing the serial connection.
 
 ## Development
 

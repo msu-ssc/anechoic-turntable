@@ -1,13 +1,20 @@
 import asyncio
+import datetime
 from types import SimpleNamespace
 
+from textual.widgets import Button
+from textual.widgets import Checkbox
+from textual.widgets import Input
 from textual.widgets import Static
 
 from anechoic_turntable import PanTilt
 from anechoic_turntable import TurntableActivity
 from anechoic_turntable import TurntableState
 from anechoic_turntable import YawPitch
+from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessagePosition
+from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.tui import TurntableTui
 
 
@@ -20,6 +27,19 @@ class FakeTurntable:
         self.abort_calls = 0
         self.raw_writes = []
         self.closed = False
+        self.receive_events = (
+            ReceivedMessage(message=b"diagnostic one\r\n"),
+            ReceivedMessageVersion(message=b"MSG:VERSION:1.2.3;\r\n", version="1.2.3"),
+            *(
+                ReceivedMessagePosition(
+                    message=f"Pos= El: -3.00 , Az: {index:.2f}\r\n".encode(),
+                    yaw=float(index),
+                    pitch=-3.0,
+                )
+                for index in range(1, 7)
+            ),
+        )
+        self.command_writes = (CommandWrite(timestamp=datetime.datetime.now(datetime.timezone.utc), command=b"CMD:VERSION;"),)
         self.snapshot = SimpleNamespace(
             state=TurntableState.STOPPED,
             activity=TurntableActivity.IDLE,
@@ -27,7 +47,7 @@ class FakeTurntable:
             uncorrected_position=YawPitch(2.0, -3.0),
             corrected_position=PanTilt(12.0, 5.0),
             target_position=None,
-            recent_events=tuple(ReceivedMessage(message=f"serial line {index}\r\n".encode()) for index in range(1, 7)),
+            recent_events=self.receive_events,
             seconds_since_last_communication=0.04,
             queued_command_count=0,
             last_error=None,
@@ -36,11 +56,11 @@ class FakeTurntable:
     def get_complete_state(self):
         return self.snapshot
 
-    def set_position(self, *, pan, tilt):
-        self.set_calls.append((pan, tilt))
+    def set_position(self, *, pan, tilt, timeout=5.0):
+        self.set_calls.append((pan, tilt, timeout))
 
-    def move_to(self, *, pan, tilt):
-        self.move_calls.append((pan, tilt))
+    def move_to(self, *, pan, tilt, move_timeout=120.0):
+        self.move_calls.append((pan, tilt, move_timeout))
 
     def confirm_position(self):
         self.confirm_calls += 1
@@ -50,6 +70,12 @@ class FakeTurntable:
 
     def send_raw(self, payload):
         self.raw_writes.append(payload)
+
+    def events(self):
+        return self.receive_events
+
+    def command_history(self):
+        return self.command_writes
 
     def close(self):
         self.closed = True
@@ -79,13 +105,14 @@ def test_tui_connects_updates_state_and_queues_commands():
             submit(app, "mov az=-3.5 el=4")
             app.refresh_controller_state()
 
-            assert rendered_text(app.query_one("#connection", Static)) == "status: stopped"
+            assert rendered_text(app.query_one("#connection", Static)) == "status: stopped    port: /dev/fake0"
             assert rendered_text(app.query_one("#azimuth", Static)) == "az: 12.000°"
             assert rendered_text(app.query_one("#elevation", Static)) == "el: 5.000°"
-            assert rendered_text(app.query_one("#reported-azimuth", Static)) == "az: 2.000°"
-            assert rendered_text(app.query_one("#reported-elevation", Static)) == "el: -3.000°"
-            assert rendered_text(app.query_one("#serial-output", Static)) == "\n".join(f"serial line {index}" for index in range(2, 7))
-            assert table.move_calls == [(-3.5, 4.0)]
+            assert "Az: 6.00" in rendered_text(app.query_one("#serial-raw", Static))
+            assert "version: 1.2.3" not in rendered_text(app.query_one("#serial-parsed", Static))
+            assert "position: az=6.0 el=-3.0" in rendered_text(app.query_one("#serial-parsed", Static))
+            assert rendered_text(app.query_one("#command-raw", Static)) == "b'CMD:VERSION;'"
+            assert table.move_calls == [(-3.5, 4.0, 120.0)]
             assert table.confirm_calls == 1
 
         assert table.abort_calls == 1
@@ -117,13 +144,41 @@ def test_tui_emergency_stop_button_aborts():
         table = FakeTurntable()
         app = TurntableTui(connector=lambda: table, refresh_interval=60)
 
-        async with app.run_test() as pilot:
+        async with app.run_test(size=(120, 40)) as pilot:
             submit(app, "connect")
             await pilot.click("#emergency-stop")
 
             assert table.abort_calls == 1
 
         assert table.abort_calls == 2
+
+    asyncio.run(exercise())
+
+
+def test_tui_expands_data_panels_and_preserves_button_labels():
+    async def exercise():
+        app = TurntableTui(refresh_interval=60)
+
+        async with app.run_test(size=(180, 50)):
+            assert app.query_one("#streams").region.height >= 12
+            assert app.query_one("#commands-panel").region.height >= 12
+            for selector, label in (
+                ("#emergency-stop", "EMERGENCY STOP"),
+                ("#filter-parsed", "Filter"),
+                ("#move-submit", "Move"),
+                ("#move-home", "Go home"),
+                ("#set-submit", "Set"),
+                ("#set-confirm", "Confirm"),
+            ):
+                button = app.query_one(selector, Button)
+                assert button.region.height == 3
+                assert str(button.label) == label
+
+            for prefix in ("move", "set"):
+                input_region = app.query_one(f"#{prefix}-az", Input).region
+                button_region = app.query_one(f"#{prefix}-submit", Button).region
+                assert input_region.height == 3
+                assert input_region.bottom == button_region.y
 
     asyncio.run(exercise())
 
@@ -138,5 +193,58 @@ def test_tui_rejects_malformed_position_commands():
             submit(app, "set az=12")
 
             assert table.set_calls == []
+
+    asyncio.run(exercise())
+
+
+def test_tui_hides_timeout_error_when_next_move_begins():
+    async def exercise():
+        table = FakeTurntable()
+        app = TurntableTui(connector=lambda: table, refresh_interval=60)
+
+        async with app.run_test():
+            submit(app, "connect")
+            table.snapshot.state = TurntableState.TIMED_OUT
+            table.snapshot.last_error = "TimeoutError: Turntable command timed out"
+            app.refresh_controller_state()
+            assert "TimeoutError" in rendered_text(app.query_one("#controller", Static))
+
+            table.snapshot.state = TurntableState.MOVING
+            table.snapshot.activity = TurntableActivity.MOVING
+            app.refresh_controller_state()
+            assert "TimeoutError" not in rendered_text(app.query_one("#controller", Static))
+
+    asyncio.run(exercise())
+
+
+def test_tui_move_set_and_filter_controls():
+    async def exercise():
+        table = FakeTurntable()
+        app = TurntableTui(connector=lambda: table, refresh_interval=60)
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            submit(app, "connect")
+            app.query_one("#move-az", Input).value = "12.5"
+            app.query_one("#move-el", Input).value = "-4"
+            app.query_one("#move-timeout", Input).value = "30"
+            await pilot.click("#move-submit")
+            await pilot.click("#move-home")
+
+            app.query_one("#set-az", Input).value = "3"
+            app.query_one("#set-el", Input).value = "2"
+            app.query_one("#set-timeout", Input).value = "9"
+            await pilot.click("#set-submit")
+            await pilot.click("#set-confirm")
+
+            assert table.move_calls == [(12.5, -4.0, 30.0), (0, 0, 240)]
+            assert table.set_calls == [(3.0, 2.0, 9.0)]
+            assert table.confirm_calls == 1
+
+            await pilot.click("#filter-parsed")
+            app.screen.query_one("#filter-position", Checkbox).value = False
+            await pilot.click("#apply-filter")
+            assert rendered_text(app.query_one("#serial-parsed", Static)) == "other\nversion: 1.2.3"
+
+        assert table.abort_calls == 1
 
     asyncio.run(exercise())

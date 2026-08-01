@@ -12,7 +12,6 @@ dependencies = [
 ]
 
 [project.scripts]
-anechoic-turntable = "anechoic_turntable.repl:main"
 anechoic-turntable-tui = "anechoic_turntable.tui:main"
 
 [build-system]
