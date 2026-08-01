@@ -12,8 +12,8 @@ anechoic chamber turntable. It contains:
 - the reusable Python serial controller in `src/anechoic_turntable/`;
 - wire-protocol parsing and formatting;
 - physical position and tilt-regime logic;
-- the interactive firmware-development shell;
-- controller, protocol, and shell tests;
+- the terminal firmware-development interface;
+- controller, protocol, and TUI tests;
 - device/controller documentation.
 
 The turntable is physical laboratory equipment driven by motors. Incorrect
@@ -94,7 +94,7 @@ Use **uv** for Python package management and execution.
 - Add a runtime dependency: `uv add <package>`
 - Add a development dependency: `uv add --dev <package>`
 - Run Python: `uv run python ...`
-- Run the diagnostic shell: `uv run anechoic-turntable`
+- Run the diagnostic TUI: `uv run anechoic-turntable-tui`
 
 The local interpreter is normally `./.venv/bin/python`.
 
@@ -138,7 +138,7 @@ Never claim a stronger verification level than was actually performed.
   requested as hardware-in-the-loop tests.
 - Use fake serial connections to exercise framing, controller state, commands,
   timeouts, and error handling.
-- Use fake controller connections to test the interactive shell.
+- Use fake controller connections to test the diagnostic TUI.
 - Keep tests small, deterministic, and minimally mocked.
 - Prefer parametrization for strict parsers and boundary cases.
 
@@ -155,13 +155,13 @@ The Python controller is intentionally threaded and non-blocking:
 - `turntable.py` is the thread-safe public API.
 - `messages.py` owns received wire-message parsing.
 - `positions.py` and `regimes.py` own device-level coordinate behavior.
-- `repl.py` is the primary interactive firmware diagnostic tool.
+- `tui.py` is the primary interactive firmware diagnostic tool.
 
 Preserve these invariants:
 
 - Do not add a second serial reader.
 - Do not bypass controller queues by writing commands directly from public API
-  or shell code.
+  or TUI code.
 - Protect shared state consistently with the existing locks and queues.
 - Public movement and SET methods remain non-blocking unless an API change is
   explicitly designed and approved.
@@ -209,7 +209,7 @@ Pos= El: <pitch> , Az: <yaw>
 
 Protocol parsers and formatters should be strict, deterministic, and tested
 against exact bytes. When adding a firmware command, update the Python
-controller, diagnostic shell when appropriate, tests, and documentation in the
+controller, diagnostic TUI when appropriate, tests, and documentation in the
 same change.
 
 The STM32 project contains generated/vendor code. Prefer edits in the intended
@@ -222,23 +222,17 @@ Keep the coordinate layers distinct:
 
 - **Yaw/pitch** are relative firmware/internal coordinates.
 - **Pan/tilt** are physical, regime-compensated controller coordinates.
-- The diagnostic shell spells physical pan/tilt as **az/el** for operator-facing
+- The diagnostic TUI spells physical pan/tilt as **az/el** for operator-facing
   commands.
 
 Do not casually rename these concepts or mix values across layers. SET changes
 the declared coordinate frame; MOV requests physical movement through the
 controller's regime logic.
 
-## Diagnostic shell
+## Diagnostic TUI
 
-The interactive shell is the primary firmware-development diagnostic tool.
+The terminal UI is the primary firmware-development diagnostic tool.
 
-- Build it on the standard-library `cmd.Cmd` framework.
-- Add commands as conventional `do_<command>` methods with useful docstrings so
-  built-in help remains accurate.
-- Do not replace `cmd.Cmd` dispatch with a custom REPL loop.
-- Do not override standard `cmd.Cmd` behavior without a concrete, documented
-  reason.
 - Keep command parsing isolated from command execution and unit-test it.
 - Reject malformed or ambiguous arguments rather than guessing.
 - Route device operations through the public `Turntable` API.

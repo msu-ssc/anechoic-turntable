@@ -180,7 +180,7 @@ The controller sends stop once when:
 - `abort()` is requested;
 - an active move loses communication;
 - a SET or MOV operation times out;
-- the interactive diagnostic shell disconnects from a live controller.
+- the diagnostic TUI disconnects from a live controller.
 
 Bytes such as `a`, `d`, `w`, and `s` that may be recognized by historical
 firmware are outside this contract. Normal controller operations MUST NOT send
