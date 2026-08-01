@@ -21,3 +21,7 @@ Moving elevation down past -30.000 degrees and then attempting to move back up t
 ## 2.0.2 — 2026-07-31
 
 BUGFIX: Reject oversized command frames without overflowing the receive buffer.
+
+## 2.0.3 — 2026-07-31
+
+BUGFIX: Safely null-terminate completed command strings.

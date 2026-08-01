@@ -82,7 +82,8 @@ int move_el = 0;
 int mode =0;  // 0 is auto, 1 is manual
 
 char rxBuffer[64];
-char rxBuffer_command[64];
+// Completed commands are C strings, so they need one extra byte for the null terminator.
+char rxBuffer_command[sizeof(rxBuffer) + 1];
 int buffn =0;
 int command_read =0;
 uint8_t buff;
@@ -140,6 +141,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	  else if (buff == ';')
 	  {
 		  memcpy(rxBuffer_command, rxBuffer, buffn);
+		  rxBuffer_command[buffn] = '\0';
 		  command_read = 1;
 		  buffn = 0;
 		  memset(rxBuffer, 0, sizeof(rxBuffer));
