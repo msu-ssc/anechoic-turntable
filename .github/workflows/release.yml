@@ -84,10 +84,12 @@ jobs:
           RELEASE_DATE="$(date -u +%F)"
 
           write_outputs() {
-            echo "firmware_version=$FIRMWARE_VERSION" >> "$GITHUB_OUTPUT"
-            echo "firmware_tag=$FIRMWARE_TAG" >> "$GITHUB_OUTPUT"
-            echo "controller_version=$CONTROLLER_VERSION" >> "$GITHUB_OUTPUT"
-            echo "controller_tag=$CONTROLLER_TAG" >> "$GITHUB_OUTPUT"
+            {
+              echo "firmware_version=$FIRMWARE_VERSION"
+              echo "firmware_tag=$FIRMWARE_TAG"
+              echo "controller_version=$CONTROLLER_VERSION"
+              echo "controller_tag=$CONTROLLER_TAG"
+            } >> "$GITHUB_OUTPUT"
           }
 
           find_one_tag() {
@@ -318,3 +320,4 @@ jobs:
               --verify-tag \
               dist/*.whl \
               dist/*.tar.gz
+          fi
