@@ -1,0 +1,54 @@
+"""Static checks for the version-controlled firmware build description."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+REPOSITORY_ROOT = Path(__file__).parents[1]
+DEBUG_DIRECTORY = REPOSITORY_ROOT / "firmware/Debug"
+PROJECT_CONFIGURATION = REPOSITORY_ROOT / "firmware/.cproject"
+BUILD_DESCRIPTIONS = (
+    DEBUG_DIRECTORY / "makefile",
+    DEBUG_DIRECTORY / "sources.mk",
+    DEBUG_DIRECTORY / "objects.mk",
+    DEBUG_DIRECTORY / "objects.list",
+    DEBUG_DIRECTORY / "Core/Src/subdir.mk",
+    DEBUG_DIRECTORY / "Core/Startup/subdir.mk",
+    DEBUG_DIRECTORY / "Drivers/STM32F4xx_HAL_Driver/Src/subdir.mk",
+)
+
+
+def test_required_cubeide_build_descriptions_are_present() -> None:
+    """A clean checkout contains every file needed by GNU make."""
+    assert all(path.is_file() for path in BUILD_DESCRIPTIONS)
+
+
+def test_firmware_build_descriptions_are_portable() -> None:
+    """Generated build descriptions contain no developer-specific absolute paths."""
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in BUILD_DESCRIPTIONS)
+
+    assert "/home/" not in combined
+    assert "/Users/" not in combined
+    assert re.search(r"(?im)(?:^|[\"'])\s*[A-Z]:[\\/]", combined) is None
+    assert '-T"../STM32F407VETX_FLASH.ld"' in combined
+
+
+def test_cubeide_project_preserves_relative_linker_script() -> None:
+    """CubeIDE regeneration cannot reintroduce a workspace-specific linker path."""
+    project_configuration = PROJECT_CONFIGURATION.read_text(encoding="utf-8")
+
+    assert project_configuration.count('value="../STM32F407VETX_FLASH.ld"') == 2
+    assert "${workspace_loc:/${ProjName}/STM32F407VETX_FLASH.ld}" not in project_configuration
+
+
+def test_firmware_build_preserves_unoptimized_profile() -> None:
+    """The published firmware build remains explicitly unoptimized."""
+    compile_rules = "\n".join(path.read_text(encoding="utf-8") for path in BUILD_DESCRIPTIONS if path.name == "subdir.mk" and "Startup" not in path.parts)
+
+    assert " -O0 " in compile_rules
+    assert " -O1 " not in compile_rules
+    assert " -O2 " not in compile_rules
+    assert " -O3 " not in compile_rules
+    assert " -Os " not in compile_rules
+    assert "-fcyclomatic-complexity" not in compile_rules

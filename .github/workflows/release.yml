@@ -1,0 +1,320 @@
+name: Release components after merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      - name: Check out main with release history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Read and validate release metadata
+        id: metadata
+        env:
+          EVENT_PATH: ${{ github.event_path }}
+          OUTPUT_DIRECTORY: ${{ runner.temp }}/release-metadata
+        run: |
+          python tools/release_metadata.py \
+            --event-path "$EVENT_PATH" \
+            --output-directory "$OUTPUT_DIRECTORY" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Record no-release merge
+        if: steps.metadata.outputs.any_release == 'false'
+        run: echo "release:none selected; no release will be created."
+
+      - name: Install uv
+        if: steps.metadata.outputs.controller_bump != 'no_bump'
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Install pinned GNU Tools for STM32
+        if: steps.metadata.outputs.firmware_bump != 'no_bump'
+        env:
+          BUNDLE_DIRECTORY: ${{ runner.temp }}/stm32cube-bundles
+          BUNDLE_VERSION: 14.3.1+st.2
+          CUBE_SHA256: e1d86e92186416094999ab07d4f7049b490e75ee8b22fb0521d39fa248dfbc9a
+          CUBE_URL: https://marketplace.visualstudio.com/_apis/public/gallery/publishers/stmicroelectronics/vsextensions/stm32cube-ide-core/1.4.0/vspackage?targetPlatform=linux-x64
+          GCC_SHA256: 51e7ad9c07341e6d0c801e341ac0573dc31d3189714108102ccf712a4f5ce4dc
+        shell: bash
+        run: |
+          set -euo pipefail
+          CUBE_PACKAGE="$RUNNER_TEMP/stm32cube-ide-core.vsix"
+          CUBE_EXECUTABLE="$RUNNER_TEMP/cube"
+
+          curl --compressed --fail --location --retry 3 "$CUBE_URL" --output "$CUBE_PACKAGE"
+          echo "$CUBE_SHA256  $CUBE_PACKAGE" | sha256sum --check --strict
+          unzip -p "$CUBE_PACKAGE" \
+            extension/resources/binaries/linux/x86_64/cube > "$CUBE_EXECUTABLE"
+          chmod +x "$CUBE_EXECUTABLE"
+
+          CUBE_BUNDLE_PATH="$BUNDLE_DIRECTORY" \
+            "$CUBE_EXECUTABLE" bundle install --yes "gnu-tools-for-stm32@${BUNDLE_VERSION}"
+          TOOLCHAIN_BIN="$BUNDLE_DIRECTORY/gnu-tools-for-stm32/$BUNDLE_VERSION/bin"
+          echo "$GCC_SHA256  $TOOLCHAIN_BIN/arm-none-eabi-gcc" | sha256sum --check --strict
+          "$TOOLCHAIN_BIN/arm-none-eabi-gcc" --version
+          echo "$TOOLCHAIN_BIN" >> "$GITHUB_PATH"
+
+      - name: Prepare, preflight, commit, tag, and publish release state
+        if: steps.metadata.outputs.any_release == 'true'
+        id: release
+        env:
+          CONTROLLER_BUMP: ${{ steps.metadata.outputs.controller_bump }}
+          CONTROLLER_NOTE: ${{ runner.temp }}/release-metadata/controller-release-note.txt
+          FIRMWARE_BUMP: ${{ steps.metadata.outputs.firmware_bump }}
+          FIRMWARE_NOTE: ${{ runner.temp }}/release-metadata/firmware-release-note.txt
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          RELEASE_DATE="$(date -u +%F)"
+
+          write_outputs() {
+            echo "firmware_version=$FIRMWARE_VERSION" >> "$GITHUB_OUTPUT"
+            echo "firmware_tag=$FIRMWARE_TAG" >> "$GITHUB_OUTPUT"
+            echo "controller_version=$CONTROLLER_VERSION" >> "$GITHUB_OUTPUT"
+            echo "controller_tag=$CONTROLLER_TAG" >> "$GITHUB_OUTPUT"
+          }
+
+          find_one_tag() {
+            local commit="$1"
+            local pattern="$2"
+            local tags
+            local count
+            tags="$(git tag --points-at "$commit" --list "$pattern")"
+            count="$(sed '/^$/d' <<< "$tags" | wc -l)"
+            if [ "$count" -ne 1 ]; then
+              echo "Expected exactly one $pattern tag on release commit $commit; found $count." >&2
+              return 1
+            fi
+            sed '/^$/d' <<< "$tags"
+          }
+
+          for ATTEMPT in 1 2 3 4 5; do
+            git fetch origin main --tags
+            git checkout --detach origin/main
+
+            FIRMWARE_VERSION=""
+            FIRMWARE_TAG=""
+            CONTROLLER_VERSION=""
+            CONTROLLER_TAG=""
+            FIRMWARE_COMMIT=""
+            CONTROLLER_COMMIT=""
+            NEW_TAGS=()
+
+            if [ "$FIRMWARE_BUMP" != "no_bump" ]; then
+              FIRMWARE_MARKER="[firmware-release-pr:${PR_NUMBER}]"
+              FIRMWARE_COMMIT="$(git log origin/main --fixed-strings --grep="$FIRMWARE_MARKER" --format=%H -n 1)"
+              if [ -n "$FIRMWARE_COMMIT" ]; then
+                FIRMWARE_TAG="$(find_one_tag "$FIRMWARE_COMMIT" 'firmware-v*')"
+                FIRMWARE_VERSION="${FIRMWARE_TAG#firmware-v}"
+              fi
+            fi
+
+            if [ "$CONTROLLER_BUMP" != "no_bump" ]; then
+              CONTROLLER_MARKER="[controller-release-pr:${PR_NUMBER}]"
+              CONTROLLER_COMMIT="$(git log origin/main --fixed-strings --grep="$CONTROLLER_MARKER" --format=%H -n 1)"
+              if [ -n "$CONTROLLER_COMMIT" ]; then
+                CONTROLLER_TAG="$(find_one_tag "$CONTROLLER_COMMIT" 'CONTROLLER_v*')"
+                CONTROLLER_VERSION="${CONTROLLER_TAG#CONTROLLER_v}"
+              fi
+            fi
+
+            if [ -n "$CONTROLLER_COMMIT" ] && [ "$FIRMWARE_BUMP" != "no_bump" ] && [ -z "$FIRMWARE_COMMIT" ]; then
+              echo "Found the controller release for PR $PR_NUMBER without its required firmware-first release." >&2
+              exit 1
+            fi
+
+            if [ "$FIRMWARE_BUMP" != "no_bump" ] && [ -z "$FIRMWARE_COMMIT" ]; then
+              FIRMWARE_VERSION="$(python tools/release_version.py firmware "$FIRMWARE_BUMP" \
+                --release-date "$RELEASE_DATE" --release-note-file "$FIRMWARE_NOTE")"
+              FIRMWARE_TAG="firmware-v${FIRMWARE_VERSION}"
+              git add firmware/Core/Inc/firmware_version.h firmware/CHANGELOG.md
+              git commit -m "chore: release firmware ${FIRMWARE_VERSION} ${FIRMWARE_MARKER}"
+              git tag "$FIRMWARE_TAG"
+              NEW_TAGS+=("$FIRMWARE_TAG")
+
+              make -C firmware/Debug clean all
+              test -f firmware/Debug/chambermotorcontrol.elf
+              arm-none-eabi-size firmware/Debug/chambermotorcontrol.elf
+            fi
+
+            if [ "$CONTROLLER_BUMP" != "no_bump" ] && [ -z "$CONTROLLER_COMMIT" ]; then
+              CONTROLLER_VERSION="$(python tools/release_version.py controller "$CONTROLLER_BUMP" \
+                --release-date "$RELEASE_DATE" --release-note-file "$CONTROLLER_NOTE")"
+              CONTROLLER_TAG="CONTROLLER_v${CONTROLLER_VERSION}"
+              git add src/anechoic_turntable/_version.py CHANGELOG.md
+              git commit -m "chore: release controller ${CONTROLLER_VERSION} ${CONTROLLER_MARKER}"
+              git tag "$CONTROLLER_TAG"
+              NEW_TAGS+=("$CONTROLLER_TAG")
+
+              rm -rf dist
+              uv build --no-sources
+              WHEEL="dist/anechoic_turntable-${CONTROLLER_VERSION}-py3-none-any.whl"
+              SDIST="dist/anechoic_turntable-${CONTROLLER_VERSION}.tar.gz"
+              test -f "$WHEEL"
+              test -f "$SDIST"
+              EXPECTED_VERSION="$CONTROLLER_VERSION" uv run --no-project --with "$WHEEL" -- python - <<'PY'
+          import importlib.metadata
+          import os
+
+          import anechoic_turntable
+
+          expected = os.environ["EXPECTED_VERSION"]
+          assert anechoic_turntable.__version__ == expected
+          assert importlib.metadata.version("anechoic-turntable") == expected
+          PY
+            fi
+
+            if [ "${#NEW_TAGS[@]}" -eq 0 ]; then
+              write_outputs
+              exit 0
+            fi
+
+            TAG_REFS=()
+            for TAG in "${NEW_TAGS[@]}"; do
+              TAG_REFS+=("refs/tags/${TAG}")
+            done
+
+            if git push --atomic origin HEAD:main "${TAG_REFS[@]}"; then
+              write_outputs
+              exit 0
+            fi
+
+            echo "Release push raced with another main update; retrying ($ATTEMPT/5)."
+            for TAG in "${NEW_TAGS[@]}"; do
+              git tag -d "$TAG"
+            done
+          done
+
+          echo "Unable to publish release state after five attempts." >&2
+          exit 1
+
+      - name: Build firmware release assets from its tag
+        if: steps.metadata.outputs.firmware_bump != 'no_bump'
+        env:
+          TAG: ${{ steps.release.outputs.firmware_tag }}
+          VERSION: ${{ steps.release.outputs.firmware_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$TAG"
+          make -C firmware/Debug clean all
+          arm-none-eabi-size firmware/Debug/chambermotorcontrol.elf
+          mkdir -p "$RUNNER_TEMP/firmware-assets"
+          ASSET="turntable_firmware_${VERSION}.elf"
+          cp firmware/Debug/chambermotorcontrol.elf "$RUNNER_TEMP/firmware-assets/$ASSET"
+          cd "$RUNNER_TEMP/firmware-assets"
+          sha256sum "$ASSET" > "${ASSET}.sha256"
+
+      - name: Build and smoke-test controller release assets from its tag
+        if: steps.metadata.outputs.controller_bump != 'no_bump'
+        env:
+          TAG: ${{ steps.release.outputs.controller_tag }}
+          VERSION: ${{ steps.release.outputs.controller_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$TAG"
+          rm -rf dist
+          uv build --no-sources
+          WHEEL="dist/anechoic_turntable-${VERSION}-py3-none-any.whl"
+          SDIST="dist/anechoic_turntable-${VERSION}.tar.gz"
+          test -f "$WHEEL"
+          test -f "$SDIST"
+          EXPECTED_VERSION="$VERSION" uv run --no-project --with "$WHEEL" -- python - <<'PY'
+          import importlib.metadata
+          import os
+
+          import anechoic_turntable
+
+          expected = os.environ["EXPECTED_VERSION"]
+          assert anechoic_turntable.__version__ == expected
+          assert importlib.metadata.version("anechoic-turntable") == expected
+          PY
+
+      - name: Create or repair firmware GitHub Release
+        if: steps.metadata.outputs.firmware_bump != 'no_bump'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTE_FILE: ${{ runner.temp }}/release-metadata/firmware-release-note.txt
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          TAG: ${{ steps.release.outputs.firmware_tag }}
+          VERSION: ${{ steps.release.outputs.firmware_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf "## Firmware %s\n\n" "$VERSION"
+            cat "$NOTE_FILE"
+            printf "\nPR: %s\n" "$PR_URL"
+          } > "$RUNNER_TEMP/firmware-release-notes.md"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "Firmware ${VERSION}" --notes-file "$RUNNER_TEMP/firmware-release-notes.md"
+            EXISTING_ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+            for ASSET in "$RUNNER_TEMP"/firmware-assets/*; do
+              ASSET_NAME="${ASSET##*/}"
+              if grep -Fxq "$ASSET_NAME" <<< "$EXISTING_ASSETS"; then
+                echo "Release asset $ASSET_NAME already exists; skipping."
+              else
+                gh release upload "$TAG" "$ASSET"
+              fi
+            done
+          else
+            gh release create "$TAG" \
+              --title "Firmware ${VERSION}" \
+              --notes-file "$RUNNER_TEMP/firmware-release-notes.md" \
+              --verify-tag \
+              "$RUNNER_TEMP"/firmware-assets/*
+          fi
+
+      - name: Create or repair controller GitHub Release
+        if: steps.metadata.outputs.controller_bump != 'no_bump'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTE_FILE: ${{ runner.temp }}/release-metadata/controller-release-note.txt
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          TAG: ${{ steps.release.outputs.controller_tag }}
+          VERSION: ${{ steps.release.outputs.controller_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf "## Controller %s\n\n" "$VERSION"
+            cat "$NOTE_FILE"
+            printf "\nPR: %s\n" "$PR_URL"
+          } > "$RUNNER_TEMP/controller-release-notes.md"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "Controller ${VERSION}" --notes-file "$RUNNER_TEMP/controller-release-notes.md"
+            EXISTING_ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+            for ASSET in dist/*.whl dist/*.tar.gz; do
+              ASSET_NAME="${ASSET##*/}"
+              if grep -Fxq "$ASSET_NAME" <<< "$EXISTING_ASSETS"; then
+                echo "Release asset $ASSET_NAME already exists; skipping."
+              else
+                gh release upload "$TAG" "$ASSET"
+              fi
+            done
+          else
+            gh release create "$TAG" \
+              --title "Controller ${VERSION}" \
+              --notes-file "$RUNNER_TEMP/controller-release-notes.md" \
+              --verify-tag \
+              dist/*.whl \
+              dist/*.tar.gz

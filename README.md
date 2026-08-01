@@ -81,18 +81,38 @@ the canonical protocol and firmware values and copies them into the Python
 version module so an installed package exposes stable release-time snapshots
 without reading repository files at import time.
 
-Every pull request to `main` must have exactly one of `version:major`,
-`version:minor`, `version:patch`, or `version:no_bump`. After a versioned pull
-request is merged, release automation commits the generated version and
-changelog update directly to `main`, creates a tag such as
-`CONTROLLER_v1.2.3`, and creates the corresponding GitHub Release with an
-installable wheel and source distribution attached. This generated chore commit
-is the only exception to the rule against direct pushes to `main`.
+Every pull request to `main` must select at least one release label. At most one
+label may be selected from each component family:
 
-The controller follows [Semantic Versioning](https://semver.org/). At `1.0.0`
-and later, major releases contain incompatible changes, minor releases add
-backward-compatible functionality, and patch releases contain
-backward-compatible fixes. The normal compatibility guarantee does not apply
-to `0.Y.Z` development releases: breaking changes and new features increment
-the minor version, while backward-compatible bug fixes increment the patch
-version.
+- `release:firmware:major`, `release:firmware:minor`, or
+  `release:firmware:patch`;
+- `release:controller:major`, `release:controller:minor`, or
+  `release:controller:patch`.
+
+Firmware and controller labels may be combined. A pull request that releases
+neither component must use `release:none`, which cannot be combined with a
+component release label.
+
+The pull-request template provides separate firmware and controller release-note
+sections. A note is required for every selected component release.
+Automation calculates exact versions from their canonical files; contributors
+must not put an exact future version in the pull request.
+
+After merge, one workflow prepares and preflights all requested releases before
+publishing release state. For a combined release it creates the firmware
+version/changelog commit first and the controller commit second, then atomically
+pushes `main` with tags such as `firmware-v2.3.4` and `CONTROLLER_v1.2.3`.
+GitHub Releases are created in the same order. Firmware releases contain
+`turntable_firmware_<version>.elf` and its SHA-256 checksum; controller releases
+contain an installable wheel and source distribution. These generated release
+commits are the only exception to the rule against direct pushes to `main`.
+
+The firmware and controller follow [Semantic Versioning](https://semver.org/).
+At `1.0.0` and later, major releases contain incompatible changes, minor
+releases add backward-compatible functionality, and patch releases contain
+backward-compatible fixes. The normal compatibility guarantee does not apply to
+`0.Y.Z` development releases: breaking changes and new features increment the
+minor version, while backward-compatible bug fixes increment the patch version.
+
+See [Firmware build](docs/firmware-build.md) for the reproducible command-line
+build, CubeIDE regeneration rules, pinned toolchain, and release artifact flow.

@@ -15,3 +15,34 @@ Do not use the direct-coordinate controller with the historical TIM1 period of
 `14400`. Its elevation counter cannot represent the controller's complete
 `[-90°, 45°]` move range without rollover. The current bounds are inclusive and
 do not yet provide an overshoot margin at exact counter endpoints.
+
+## Command-line build
+
+The version-controlled STM32CubeIDE managed-build descriptions under `Debug/`
+allow a clean checkout to build the firmware without the complete IDE:
+
+```shell
+make -C firmware/Debug clean all
+arm-none-eabi-size firmware/Debug/chambermotorcontrol.elf
+```
+
+The complete build contract—including the pinned compiler, `-O0` profile,
+tracked generated inputs, relative linker configuration, regeneration process,
+and verification boundaries—is documented in
+[Firmware build](../docs/firmware-build.md).
+
+## Firmware releases
+
+`Core/Inc/firmware_version.h` is the canonical firmware version and
+`CHANGELOG.md` is the firmware release history. Pull requests select a semantic
+version bump with one `release:firmware:*` label and provide the corresponding
+note in the pull-request template. After merge, automation builds the exact
+firmware release commit and publishes:
+
+- tag `firmware-v<version>`;
+- artifact `turntable_firmware_<version>.elf`;
+- artifact `turntable_firmware_<version>.elf.sha256`.
+
+The firmware version is not currently embedded in the executable. Release
+provenance therefore comes from the tag, release commit, asset name, and
+checksum.

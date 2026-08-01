@@ -38,7 +38,8 @@ This repository owns device-level behavior and compatibility.
 - Python controller behavior is documented in `docs/controller.md`.
 - `docs/protocol.md` is the authoritative firmware–controller protocol
   contract.
-- Firmware-specific information belongs in `firmware/README.md`.
+- Firmware-specific overview information belongs in `firmware/README.md`.
+- Firmware build and release-artifact details are in `docs/firmware-build.md`.
 - Tests live in `tests/`.
 
 ## Operating mode
@@ -55,9 +56,10 @@ This repository owns device-level behavior and compatibility.
 ## Git and external-state rules
 
 - Never push directly to `main`.
-- The sole exception is the post-merge controller-release GitHub Action. It may
-  push its generated version/changelog chore commit and controller tag directly
-  to `main`. Humans and all other automation must still use pull requests.
+- The sole exception is the post-merge release GitHub Action. It may push its
+  generated firmware and controller version/changelog chore commits and tags
+  directly to `main`. Humans and all other automation must still use pull
+  requests.
 - Work on a feature branch and use a pull request when publication is requested.
 - Do not create or change remotes, publish a package, flash firmware, energize
   hardware, or operate the physical table unless the user explicitly requests
@@ -65,15 +67,23 @@ This repository owns device-level behavior and compatibility.
 - Do not modify or delete neighboring repositories as part of work here.
 - Preserve unrelated working-tree changes.
 
-Every pull request to `main` must have exactly one controller-version label:
+Every pull request to `main` must select at least one release label. At most one
+label may be selected from each component family:
 
-- `version:major`;
-- `version:minor`;
-- `version:patch`; or
-- `version:no_bump`, which should be rare.
+- `release:firmware:major`, `release:firmware:minor`, or
+  `release:firmware:patch`;
+- `release:controller:major`, `release:controller:minor`, or
+  `release:controller:patch`.
 
-While the controller is at version `0.Y.Z`, breaking changes and new features
-use `version:minor`, and backward-compatible bug fixes use `version:patch`.
+Firmware and controller labels may be combined. If neither component is being
+released, use `release:none` by itself.
+
+The pull-request template supplies separate release notes for firmware and the
+controller. A note is required for each selected component release.
+
+While a component is at version `0.Y.Z`, breaking changes and new features use
+that component's `minor` label, and backward-compatible bug fixes use its
+`patch` label.
 After `1.0.0`, use normal Semantic Versioning compatibility rules.
 
 ## Dependency management

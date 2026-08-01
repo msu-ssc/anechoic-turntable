@@ -1,4 +1,14 @@
-Debug/
+# CubeIDE's managed-build descriptions in Debug/ are version-controlled so a
+# clean checkout can build with GNU Tools for STM32. Ignore only generated outputs.
+Debug/**/*.cyclo
+Debug/**/*.d
+Debug/**/*.o
+Debug/**/*.su
+Debug/*.elf
+Debug/*.list
+!Debug/objects.list
+Debug/*.map
+Debug/*.stdout
 
 # Object files
 *.o
