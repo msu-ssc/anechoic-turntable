@@ -305,11 +305,8 @@ bool parse_set_command(const char *input, float *yaw, float *pitch) {
     return parse_command_coordinates(input, "CMD:SET:", yaw, pitch);
 }
 
-bool parse_counter_set_command(
-    const char *input,
-    uint32_t *azimuth_counter,
-    uint32_t *elevation_counter
-) {
+bool parse_counter_set_command(const char *input, uint32_t *azimuth_counter, uint32_t *elevation_counter)
+{
     static const char expected_prefix[] = "CMD:CNT:";
 
     size_t prefix_length =
@@ -464,8 +461,8 @@ void MYPROG_main_loop()
 		// Keep parsed movement coordinates local until the complete command can be applied safely.
 		float move_yaw = 0.0f;
 		float move_pitch = 0.0f;
-		uint32_t azimuth_counter = 0;
-		uint32_t elevation_counter = 0;
+    uint32_t azimuth_counter = 0;
+    uint32_t elevation_counter = 0;
 		// These flags identify which supported command shape matched the private copy.
 		bool is_move_command = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
 		bool is_set_command = parse_set_command(command_to_process, &settimer1, &settimer2);
@@ -474,7 +471,6 @@ void MYPROG_main_loop()
     bool is_counter_set_command = parse_counter_set_command(command_to_process, &azimuth_counter, &elevation_counter);
 		// Set when an emergency stop invalidates the command while it is being parsed.
 		bool command_cancelled = false;
-
     bool send_counter_response = false;
 
 		// Parsing happens with interrupts enabled. Pause them again only while applying
@@ -497,35 +493,16 @@ void MYPROG_main_loop()
       move_el = 0;
       mode = 0;
 
-      TIM3->CCR1 = 0;
-      TIM3->CCR2 = 0;
-      TIM3->CCR3 = 0;
-      TIM3->CCR4 = 0;
-
-      HAL_GPIO_WritePin(
-        GPIOE,
-        ENABLE_A_Pin,
-        GPIO_PIN_RESET
-      );
-      HAL_GPIO_WritePin(
-        GPIOE,
-        ENABLE_E_Pin,
-        GPIO_PIN_RESET
-      );
-      HAL_GPIO_WritePin(
-        GPIOB,
-        ENABLE_EE_Pin,
-        GPIO_PIN_RESET
-      );
+      MYPROG_disable_az();
+      MYPROG_disable_el();
 
       TIM2->CNT = azimuth_counter;
       TIM1->CNT = elevation_counter;
 
       azimuth_counter = TIM2->CNT;
       elevation_counter = TIM1->CNT;
+
       send_counter_response = true;
-
-
     }
 		else
 		{
@@ -557,21 +534,7 @@ void MYPROG_main_loop()
 		}
 		__enable_irq();
 
-		if (!command_cancelled && send_counter_response)
-		{
-			int counter_message_length = snprintf(
-				sendbuffer,
-				sizeof(sendbuffer),
-				"MSG:CNT:%lu,%lu;\r\n",
-				(unsigned long)azimuth_counter,
-				(unsigned long)elevation_counter
-			);
-			if (counter_message_length > 0 && counter_message_length < (int)sizeof(sendbuffer))
-			{
-				MYPROG_SendData(sendbuffer, counter_message_length);
-			}
-		}
-		else if (!command_cancelled && is_version_command)
+		if (!command_cancelled && is_version_command)
 		{
 			MYPROG_SendData(firmware_version_message, (int)sizeof(firmware_version_message) - 1);
 		}
