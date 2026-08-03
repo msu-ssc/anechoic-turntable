@@ -33,3 +33,7 @@ Made several backwards compatible changes to the controller TUI:
 - Added command output and exact transmitted-byte history.
 - Added dedicated Move and Set controls
 - Surfaced timeout inputs for commands
+
+## 0.6.0 — 2026-08-03
+
+Make default move timeout be dynamic based on empirical measurements of travel time.
