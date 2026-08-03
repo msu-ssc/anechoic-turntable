@@ -27,6 +27,7 @@ class FakeTurntable:
         self.abort_calls = 0
         self.raw_writes = []
         self.closed = False
+        self.estimated_travel_time = 10.0
         self.receive_events = (
             ReceivedMessage(message=b"diagnostic one\r\n"),
             ReceivedMessageVersion(message=b"MSG:VERSION:1.2.3;\r\n", version="1.2.3"),
@@ -61,6 +62,9 @@ class FakeTurntable:
 
     def move_to(self, *, pan, tilt, move_timeout=None):
         self.move_calls.append((pan, tilt, move_timeout))
+
+    def estimate_time(self, *, pan, tilt):
+        return self.estimated_travel_time
 
     def confirm_position(self):
         self.confirm_calls += 1
@@ -236,7 +240,7 @@ def test_tui_move_set_and_filter_controls():
             await pilot.click("#set-submit")
             await pilot.click("#set-confirm")
 
-            assert table.move_calls == [(12.5, -4.0, 30.0), (0, 0, 240)]
+            assert table.move_calls == [(12.5, -4.0, 30.0), (0, 0, None)]
             assert table.set_calls == [(3.0, 2.0, 9.0)]
             assert table.confirm_calls == 1
 
@@ -244,6 +248,26 @@ def test_tui_move_set_and_filter_controls():
             app.screen.query_one("#filter-position", Checkbox).value = False
             await pilot.click("#apply-filter")
             assert rendered_text(app.query_one("#serial-parsed", Static)) == "other\nversion: 1.2.3"
+
+        assert table.abort_calls == 1
+
+    asyncio.run(exercise())
+
+
+def test_tui_move_timeout_is_blank_and_displays_automatic_value():
+    async def exercise():
+        table = FakeTurntable()
+        app = TurntableTui(connector=lambda: table, refresh_interval=60)
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            submit(app, "connect")
+            timeout_input = app.query_one("#move-timeout", Input)
+
+            assert timeout_input.value == ""
+            assert timeout_input.placeholder == "auto: 20.00 seconds"
+
+            await pilot.click("#move-submit")
+            assert table.move_calls == [(0.0, 0.0, None)]
 
         assert table.abort_calls == 1
 

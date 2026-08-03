@@ -25,9 +25,11 @@ Start the terminal UI with:
 uv run anechoic-turntable-tui
 ```
 
-The Move and Set sections provide azimuth, elevation, and timeout inputs. Go
-home moves to azimuth 0° and elevation 0° with a 240-second timeout; Confirm
-approves the currently reported position without sending a SET command. The Raw
+The Move and Set sections provide azimuth, elevation, and timeout inputs. The
+move timeout is optional: when blank, subtle placeholder text shows the current
+automatic estimate. Go home moves to azimuth 0° and elevation 0° with an
+automatic timeout; Confirm approves the currently reported position without
+sending a SET command. The Raw
 and Parsed panels show received serial events, with a message-type filter for
 the parsed stream. The Commands panel shows both operator/controller output and
 the exact bytes written to the serial connection.
