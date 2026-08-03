@@ -307,8 +307,8 @@ bool parse_set_command(const char *input, float *yaw, float *pitch) {
 
 bool parse_counter_set_command(const char *input, uint32_t *azimuth_counter, uint32_t *elevation_counter)
 {
-    static const char expected_prefix[] = "CMD:CNT:pan=";
-    static const char expected_separator[] = ",tilt=";
+    static const char expected_prefix[] = "CMD:CNT:PAN=";
+    static const char expected_separator[] = ",TILT=";
 
     size_t prefix_length =
         sizeof(expected_prefix) - 1U;
@@ -542,7 +542,7 @@ void MYPROG_main_loop()
     if (!command_cancelled && send_counter_response)
     {
       int counter_message_length = snprintf(sendbuffer, sizeof(sendbuffer),
-      "MSG:CNT:pan=%lu,tilt=%lu;\r\n",
+      "MSG:CNT:PAN=%lu,TILT=%lu;\r\n",
       (unsigned long)azimuth_counter,(unsigned long)elevation_counter);
 
       if (counter_message_length > 0 && counter_message_length < (int)sizeof(sendbuffer))
