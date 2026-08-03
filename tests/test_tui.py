@@ -59,7 +59,7 @@ class FakeTurntable:
     def set_position(self, *, pan, tilt, timeout=5.0):
         self.set_calls.append((pan, tilt, timeout))
 
-    def move_to(self, *, pan, tilt, move_timeout=120.0):
+    def move_to(self, *, pan, tilt, move_timeout=None):
         self.move_calls.append((pan, tilt, move_timeout))
 
     def confirm_position(self):
@@ -112,7 +112,7 @@ def test_tui_connects_updates_state_and_queues_commands():
             assert "version: 1.2.3" not in rendered_text(app.query_one("#serial-parsed", Static))
             assert "position: az=6.0 el=-3.0" in rendered_text(app.query_one("#serial-parsed", Static))
             assert rendered_text(app.query_one("#command-raw", Static)) == "b'CMD:VERSION;'"
-            assert table.move_calls == [(-3.5, 4.0, 120.0)]
+            assert table.move_calls == [(-3.5, 4.0, None)]
             assert table.confirm_calls == 1
 
         assert table.abort_calls == 1

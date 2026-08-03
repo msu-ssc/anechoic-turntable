@@ -25,6 +25,8 @@ ALLOWABLE_DISCREPANCY_DEG = 0.11
 ABSOLUTE_PAN_BOUNDS = (-180.0, 180.0)
 ABSOLUTE_TILT_BOUNDS = (-90.0, 45.0)
 SET_TILT_BOUNDS = (-90.0, 90.0)
+MOVE_TIMEOUT_ESTIMATE_MULTIPLIER = 1.5
+MOVE_TIMEOUT_MARGIN_SECONDS = 5.0
 
 
 class TurntableError(Exception):
@@ -110,7 +112,7 @@ class _MoveCommand:
     generation: int
     pan: float
     tilt: float
-    timeout: float
+    timeout: float | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -239,9 +241,10 @@ class ControllerThread(threading.Thread):
             )
             self._state = TurntableState.STOPPED
 
-    def submit_move(self, *, pan: float, tilt: float, timeout: float) -> None:
+    def submit_move(self, *, pan: float, tilt: float, timeout: float | None) -> None:
         _validate_position(pan=pan, tilt=tilt)
-        _validate_timeout(timeout)
+        if timeout is not None:
+            _validate_timeout(timeout)
         with self._lock:
             self._ensure_open()
             if not (self._has_been_set or self._set_requested):
@@ -253,6 +256,19 @@ class ControllerThread(threading.Thread):
                     tilt=tilt,
                     timeout=timeout,
                 )
+            )
+
+    def estimate_time(self, *, pan: float, tilt: float) -> float:
+        """Estimate travel time to a physical target, without timeout margin."""
+
+        _validate_position(pan=pan, tilt=tilt)
+        with self._lock:
+            self._ensure_open()
+            if self._corrected_position is None:
+                raise TurntableError("A current position report is required to estimate movement time")
+            return _estimate_movement_time(
+                current=self._corrected_position,
+                target=PanTilt(pan=pan, tilt=tilt),
             )
 
     def submit_raw(self, payload: bytes) -> None:
@@ -576,7 +592,18 @@ class ControllerThread(threading.Thread):
                 self._state = TurntableState.ERROR
                 self._set_requested = False
                 return
-            deadline, timeout_at = _make_deadline(command.timeout)
+            if self._corrected_position is None:
+                self._last_error = TurntableError("The current position is unavailable")
+                self._state = TurntableState.ERROR
+                return
+            timeout = command.timeout
+            if timeout is None:
+                estimated_time = _estimate_movement_time(
+                    current=self._corrected_position,
+                    target=PanTilt(pan=command.pan, tilt=command.tilt),
+                )
+                timeout = estimated_time * MOVE_TIMEOUT_ESTIMATE_MULTIPLIER + MOVE_TIMEOUT_MARGIN_SECONDS
+            deadline, timeout_at = _make_deadline(timeout)
             operation = _MoveOperation(
                 pan=command.pan,
                 tilt=command.tilt,
@@ -647,6 +674,28 @@ def _validate_set_position(*, pan: float, tilt: float) -> None:
         raise ValueError(f"pan must be within {ABSOLUTE_PAN_BOUNDS}")
     if not math.isfinite(tilt) or not SET_TILT_BOUNDS[0] <= tilt <= SET_TILT_BOUNDS[1]:
         raise ValueError(f"tilt must be within {SET_TILT_BOUNDS}")
+
+
+def _estimate_movement_time(*, current: PanTilt, target: PanTilt) -> float:
+    """Estimate concurrent two-axis travel time from empirical measurements."""
+
+    pan_time = _estimate_axis_time(abs(target.pan - current.pan), axis="pan")
+    tilt_time = _estimate_axis_time(abs(target.tilt - current.tilt), axis="tilt")
+    return max(pan_time, tilt_time)
+
+
+def _estimate_axis_time(angle: float, *, axis: Literal["pan", "tilt"]) -> float:
+    """Estimate one-axis travel time, including acceleration and deceleration."""
+
+    if axis == "pan":
+        if angle < 2:
+            return 0.5713 + 1.0117 * math.sqrt(angle)
+        return 0.3940 * angle + 1.2141
+    if axis == "tilt":
+        if angle < 2:
+            return -0.1949 + 2.8896 * math.sqrt(angle)
+        return 0.9038 * angle + 2.0841
+    raise ValueError(f"Invalid axis: {axis!r}. Must be 'pan' or 'tilt'.")
 
 
 def _position_matches(actual: YawPitch, expected: YawPitch) -> bool:

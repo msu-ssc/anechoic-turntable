@@ -7,8 +7,10 @@ anechoic chamber turntable:
   Python serial controller, wire-protocol handling, and physical position logic.
 - [`firmware/`](firmware/) contains the STM32 turntable firmware.
 
-See the [controller guide](docs/controller.md) for the Python API and
-[firmware documentation](firmware/README.md) for firmware-specific information.
+See the [controller guide](docs/controller.md) for the Python API, the
+[travel-time estimate model](docs/travel-time-estimates.md) for movement timing,
+and [firmware documentation](firmware/README.md) for firmware-specific
+information.
 
 The [firmware–controller protocol contract](docs/protocol.md) is the
 authoritative source for UART framing, commands, reports, coordinate semantics,

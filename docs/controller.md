@@ -42,7 +42,9 @@ Version responses do not count as position communication for timeout purposes.
 
 `set_position` and `move_to` queue work and return immediately. Commands are
 processed in order. `move_to` sends physical pan and tilt directly as firmware
-yaw and pitch. `abort` is the exception: it immediately
+yaw and pitch. By default, its timeout is calculated when the queued move
+starts, so earlier queued moves are reflected in the starting position.
+`abort` is the exception: it immediately
 invalidates the active operation and every queued command, writes the stop
 command, and returns only after that write has been attempted.
 
@@ -66,10 +68,16 @@ physical-coordinate state. A subsequent normal move requires `set_position()`
 or `confirm_position()` first. Use `abort()` rather than a raw `p` when an
 immediate stop is required: abort bypasses queued work, while raw writes do not.
 
-The web controller estimates move duration from the current and requested
-positions. When a move timeout is left blank, it uses
-`estimated_travel_time * 1.5 + 5 seconds`; a positive custom timeout can be
-provided for an individual move.
+`estimate_time(pan=..., tilt=...)` returns the estimated travel time in seconds
+from the current position to the requested physical position. It uses
+empirically derived acceleration-aware curves for the pan and tilt axes, then
+returns the larger estimate because both axes move concurrently. It does not
+include a timeout safety margin.
+
+When `move_timeout` is omitted or `None`, `move_to` uses
+`estimate_time * 1.5 + 5 seconds`. A positive custom timeout can be provided for
+an individual move. See [Travel-time estimates](travel-time-estimates.md) for
+the empirical model and its limitations.
 
 ## Coordinate terminology
 
