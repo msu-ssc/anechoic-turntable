@@ -57,6 +57,7 @@ void MYPROG_motor_control_loop();
 void MYPROG_move_axis(int axis, int speed, int dir);
 void MYPROG_disable_az();
 void MYPROG_disable_el();
+void MYPROG_send_firmware_info(void);
 
 //global vars
 int Az_pos;
@@ -262,6 +263,13 @@ void MYPROG_SendData(char * data, int size)
 	 HAL_UART_Transmit(&huart1, (uint8_t *) data, size, 1000);
 }
 
+void MYPROG_send_firmware_info(void)
+{
+  static const char firmware_info[] = "FIRMWARE VERSION: " FIRMWARE_VERSION "\r\n";
+
+  MYPROG_SendData((char * )firmware_info, sizeof(firmware_info) - 1);
+}
+
 void MYPROG_GetData(char *buffer, int size)
 {
 
@@ -288,13 +296,7 @@ void MYPROG_main_loop()
 {
     if (parse_info_command(rxBuffer_command))
     {
-        static const char firmware_info[] =
-            "FIRMWARE VERSION: " FIRMWARE_VERSION "\r\n";
-
-        MYPROG_SendData(
-            (char *)firmware_info,
-            sizeof(firmware_info) - 1
-        );
+        MYPROG_send_firmware_info();
     }
     else
     {
