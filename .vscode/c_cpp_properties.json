@@ -1,0 +1,39 @@
+{
+    "configurations": [
+        {
+            "name": "STM32F407 Debug",
+            "compilerPath": "arm-none-eabi-gcc",
+            "compilerArgs": [
+                "-mcpu=cortex-m4",
+                "-mfpu=fpv4-sp-d16",
+                "-mfloat-abi=hard",
+                "-mthumb"
+            ],
+            "includePath": [
+                "${workspaceFolder}/firmware/Core/Inc",
+                "${workspaceFolder}/firmware/Drivers/STM32F4xx_HAL_Driver/Inc",
+                "${workspaceFolder}/firmware/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy",
+                "${workspaceFolder}/firmware/Drivers/CMSIS/Device/ST/STM32F4xx/Include",
+                "${workspaceFolder}/firmware/Drivers/CMSIS/Include"
+            ],
+            "defines": [
+                "DEBUG",
+                "USE_HAL_DRIVER",
+                "STM32F407xx"
+            ],
+            "cStandard": "gnu11",
+            "intelliSenseMode": "linux-gcc-arm",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/firmware/Core/Inc",
+                    "${workspaceFolder}/firmware/Drivers/STM32F4xx_HAL_Driver/Inc",
+                    "${workspaceFolder}/firmware/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy",
+                    "${workspaceFolder}/firmware/Drivers/CMSIS/Device/ST/STM32F4xx/Include",
+                    "${workspaceFolder}/firmware/Drivers/CMSIS/Include"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}
