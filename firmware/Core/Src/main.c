@@ -307,7 +307,8 @@ bool parse_set_command(const char *input, float *yaw, float *pitch) {
 
 bool parse_counter_set_command(const char *input, uint32_t *azimuth_counter, uint32_t *elevation_counter)
 {
-    static const char expected_prefix[] = "CMD:CNT:";
+    static const char expected_prefix[] = "CMD:CNT:pan=";
+    static const char expected_separator[] = ",tilt=";
 
     size_t prefix_length =
         sizeof(expected_prefix) - 1U;
@@ -331,12 +332,16 @@ bool parse_counter_set_command(const char *input, uint32_t *azimuth_counter, uin
     );
 
     if (azimuth_length < 0 ||
-        counter_text[azimuth_length] != ',') {
+        strncmp(
+            counter_text + azimuth_length,
+            expected_separator,
+            sizeof(expected_separator) - 1U
+        ) != 0) {
         return false;
     }
 
     const char *elevation_text =
-        counter_text + azimuth_length + 1;
+        counter_text + azimuth_length + sizeof(expected_separator) - 1U;
 
     uint32_t parsed_elevation = 0;
 
@@ -534,7 +539,18 @@ void MYPROG_main_loop()
 		}
 		__enable_irq();
 
-		if (!command_cancelled && is_version_command)
+    if (!command_cancelled && send_counter_response)
+    {
+      int counter_message_length = snprintf(sendbuffer, sizeof(sendbuffer),
+      "MSG:CNT:pan=%lu,tilt=%lu;\r\n",
+      (unsigned long)azimuth_counter,(unsigned long)elevation_counter);
+
+      if (counter_message_length > 0 && counter_message_length < (int)sizeof(sendbuffer))
+      {
+        MYPROG_SendData(sendbuffer, counter_message_length);
+      }
+    }
+    else if (!command_cancelled && is_version_command)
 		{
 			MYPROG_SendData(firmware_version_message, (int)sizeof(firmware_version_message) - 1);
 		}
