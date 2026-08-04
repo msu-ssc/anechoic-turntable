@@ -472,7 +472,7 @@ void MYPROG_main_loop()
 		bool is_move_command = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
 		bool is_set_command = parse_set_command(command_to_process, &settimer1, &settimer2);
 		bool is_version_command = strcmp(command_to_process, "CMD:VERSION") == 0;
-    bool is_counter_get_command = strcmp(command_to_process, "CMD:CNT:?") == 0;
+    bool is_counter_get_command = strcmp(command_to_process, "CMD:CNT") == 0;
     bool is_counter_set_command = parse_counter_set_command(command_to_process, &azimuth_counter, &elevation_counter);
 		// Set when an emergency stop invalidates the command while it is being parsed.
 		bool command_cancelled = false;
