@@ -324,6 +324,17 @@ bool parse_command_coordinates(const char *input, const char *expected_prefix, f
     return true;
 }
 
+bool valid_mov_coordinate(float yaw, float pitch)
+{
+  return yaw >= MIN_PAN_DEG && yaw <= MAX_PAN_DEG
+      && pitch >= MIN_MOVE_TILT_DEG && pitch <= MAX_MOVE_TILT_DEG;
+}
+
+bool valid_set_coordinate(float yaw, float pitch)
+{
+  return yaw >= MIN_PAN_DEG && yaw <= MAX_PAN_DEG
+      && pitch >= MIN_SET_PITCH_DEG && pitch <= MAX_SET_PITCH_DEG;
+}
 bool parse_mov_command(const char *input, float *yaw, float *pitch) {
     return parse_command_coordinates(input, "CMD:MOV:", yaw, pitch);
 }
@@ -632,13 +643,11 @@ void MYPROG_main_loop()
 		{
 		case COMMAND_MOV:
 			command_parsed = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
-			command_rejected = command_parsed &&
-				(move_yaw < -180.0f || move_yaw > 180.0f || move_pitch < -90.0f || move_pitch > 45.0f);
+			command_rejected = command_parsed && !valid_mov_coordinate(move_yaw, move_pitch);
 			break;
 		case COMMAND_SET:
 			command_parsed = parse_set_command(command_to_process, &settimer1, &settimer2);
-			command_rejected = command_parsed &&
-				(settimer1 < -180.0f || settimer1 > 180.0f || settimer2 < -90.0f || settimer2 > 90.0f);
+			command_rejected = command_parsed && !valid_set_coordinate(settimer1, settimer2);
 			break;
 		case COMMAND_VERSION:
 			command_parsed = strcmp(command_to_process, "CMD:VERSION") == 0;
