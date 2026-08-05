@@ -1,0 +1,5 @@
+{
+    "cmake.sourceDirectory": "${workspaceFolder}/firmware",
+    "cmake.useCMakePresets": "always",
+    "cmake.configureOnOpen": true
+}

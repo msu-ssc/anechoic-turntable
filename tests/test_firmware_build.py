@@ -8,6 +8,8 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).parents[1]
 DEBUG_DIRECTORY = REPOSITORY_ROOT / "firmware/Debug"
 PROJECT_CONFIGURATION = REPOSITORY_ROOT / "firmware/.cproject"
+CMAKE_CONFIGURATION = REPOSITORY_ROOT / "firmware/cmake/stm32cubemx/CMakeLists.txt"
+VSCODE_CONFIGURATION = REPOSITORY_ROOT / ".vscode/settings.json"
 BUILD_DESCRIPTIONS = (
     DEBUG_DIRECTORY / "makefile",
     DEBUG_DIRECTORY / "sources.mk",
@@ -40,6 +42,30 @@ def test_cubeide_project_preserves_relative_linker_script() -> None:
 
     assert project_configuration.count('value="../STM32F407VETX_FLASH.ld"') == 2
     assert "${workspace_loc:/${ProjName}/STM32F407VETX_FLASH.ld}" not in project_configuration
+
+
+def test_cmake_build_description_is_machine_independent() -> None:
+    """CMake uses repository or environment-relative paths, not a developer path."""
+    cmake_configuration = CMAKE_CONFIGURATION.read_text(encoding="utf-8")
+
+    assert "/home/" not in cmake_configuration
+    assert "/Users/" not in cmake_configuration
+    assert re.search(r"(?im)(?:^|[\"'])\s*[A-Z]:[\\/]", cmake_configuration) is None
+    assert "${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers" in cmake_configuration
+    assert "../../Core/Startup/startup_stm32f407vetx.s" in cmake_configuration
+
+    gcc_toolchain = (REPOSITORY_ROOT / "firmware/cmake/gcc-arm-none-eabi.cmake").read_text(encoding="utf-8")
+    assert "STM32F407VETX_FLASH.ld" in gcc_toolchain
+    assert "STM32F407xx_FLASH.ld" not in gcc_toolchain
+
+
+def test_vscode_cmake_configuration_is_machine_independent() -> None:
+    """The shared VS Code configuration does not name a host tool installation."""
+    vscode_configuration = VSCODE_CONFIGURATION.read_text(encoding="utf-8")
+
+    assert '"cmake.sourceDirectory": "${workspaceFolder}/firmware"' in vscode_configuration
+    assert '"cmake.cmakePath"' not in vscode_configuration
+    assert '"PATH"' not in vscode_configuration
 
 
 def test_firmware_build_preserves_unoptimized_profile() -> None:

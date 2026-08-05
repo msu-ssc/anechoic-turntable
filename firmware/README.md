@@ -31,6 +31,28 @@ tracked generated inputs, relative linker configuration, regeneration process,
 and verification boundaries—is documented in
 [Firmware build](../docs/firmware-build.md).
 
+## Portable CMake build
+
+The CMake presets work on Windows, Linux, and macOS when `cmake`, `ninja`, and
+the pinned ST `arm-none-eabi` toolchain are available on `PATH`:
+
+```shell
+cd firmware
+cmake --preset Debug
+cmake --build --preset Debug
+```
+
+CMake uses the HAL and CMSIS sources under `Drivers/` in a normal checkout. If
+CubeMX has removed those local files, it also checks the standard
+`STM32Cube/Repository/STM32Cube_FW_F4_V1.28.1` directory below the current
+user's home directory. As a final portable override, `STM32CUBE_F4_PATH` may
+name the STM32Cube F4 package directory. No developer-specific absolute path is
+stored in the project.
+
+The output is `build/Debug/chambermotorcontrol.elf`. This CMake build is useful
+for local development; the release-reproducible build contract remains the
+CubeIDE-generated GNU Make build described above.
+
 ## Firmware releases
 
 `Core/Inc/firmware_version.h` is the canonical firmware version and
