@@ -91,9 +91,12 @@ int buffn =0;
 volatile int command_read =0;
 uint8_t buff;
 bool discarding_oversized_frame = false;
+volatile uint32_t rejected_frame_count = 0;
+volatile uint32_t unable_to_parse_frame_count = 0;
 // Incremented when the emergency-stop byte ('p') is received, allowing the
 // main loop to recognize and cancel a command copied before the stop.
 volatile uint32_t stop_generation = 0;
+volatile uint32_t emergency_stop_ack_count = 0;
 static const char firmware_version_message[] = "MSG:VERSION:" FIRMWARE_VERSION ";\r\n";
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
@@ -128,8 +131,21 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	  mode = 1;
   }else if (buff == 'p')
   {
+	  if (command_read == 1 && rejected_frame_count < UINT32_MAX)
+	  {
+		  rejected_frame_count++;
+	  }
+	  if ((command_read == -1 || buffn > 0 || discarding_oversized_frame) &&
+		  unable_to_parse_frame_count < UINT32_MAX)
+	  {
+		  unable_to_parse_frame_count++;
+	  }
 	  command_read =0;
 	  stop_generation++;
+	  if (emergency_stop_ack_count < UINT32_MAX)
+	  {
+		  emergency_stop_ack_count++;
+	  }
 	  move = 0;
 	  mode = 0;
 	  buff =0;
@@ -150,16 +166,28 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 		  if (buff == ';')
 		  {
 			  discarding_oversized_frame = false;
+			  if (command_read == 0)
+			  {
+				  command_read = -1;
+			  }
+			  else if (rejected_frame_count < UINT32_MAX)
+			  {
+				  rejected_frame_count++;
+			  }
 		  }
 	  }
 	  else if (buff == ';')
 	  {
 		  // Keep the existing command until the main loop has copied it.
-		  if (command_read != 1)
+		  if (command_read == 0)
 		  {
 			  memcpy(rxBuffer_command, rxBuffer, buffn);
 			  rxBuffer_command[buffn] = '\0';
 			  command_read = 1;
+		  }
+		  else if (rejected_frame_count < UINT32_MAX)
+		  {
+			  rejected_frame_count++;
 		  }
 		  buffn = 0;
 		  memset(rxBuffer, 0, sizeof(rxBuffer));
@@ -169,10 +197,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 		  // Check before writing so an oversized frame cannot overflow rxBuffer.
 		  buffn = 0;
 		  memset(rxBuffer, 0, sizeof(rxBuffer));
-		  if (command_read != 1)
-		  {
-			  command_read = -1;
-		  }
 		  discarding_oversized_frame = true;
 	  }
 	  else
@@ -193,7 +217,7 @@ bool is_ascii_digit(char character) {
     return character >= '0' && character <= '9';
 }
 
-// Parse one v2 wire number and return the number of characters it consumed.
+// Parse one canonical wire number and return the number of characters it consumed.
 // A negative return value means the number was malformed.
 int parse_wire_number(const char *text, float *parsed_value) {
     int index = 0;
@@ -209,17 +233,14 @@ int parse_wire_number(const char *text, float *parsed_value) {
         return -1;
     }
 
-    // A decimal point is optional, but it must be followed by at least one digit.
-    if (text[index] == '.') {
-        index++;
-        int decimal_start = index;
-        while (is_ascii_digit(text[index])) {
-            index++;
-        }
-        if (index == decimal_start) {
-            return -1;
-        }
+    if (text[index] != '.' ||
+        !is_ascii_digit(text[index + 1]) ||
+        !is_ascii_digit(text[index + 2]) ||
+        !is_ascii_digit(text[index + 3]) ||
+        is_ascii_digit(text[index + 4])) {
+        return -1;
     }
+    index += 4;
 
     float value = 0.0f;
     int converted_length = 0;
@@ -232,6 +253,9 @@ int parse_wire_number(const char *text, float *parsed_value) {
         return -1;
     }
     if (!isfinite(value)) {
+        return -1;
+    }
+    if (text[0] == '-' && value == 0.0f) {
         return -1;
     }
 
@@ -367,6 +391,72 @@ bool parse_counter_command(
     return true;
 }
 
+typedef enum
+{
+    COMMAND_UNKNOWN,
+    COMMAND_SET,
+    COMMAND_MOV,
+    COMMAND_MOV_CNT,
+    COMMAND_SET_CNT,
+    COMMAND_VERSION,
+    COMMAND_CNT
+} command_type_t;
+
+bool command_token_matches(const char *input, const char *token)
+{
+    static const char command_prefix[] = "CMD:";
+    size_t token_length = strlen(token);
+    if (strncmp(input, command_prefix, sizeof(command_prefix) - 1U) != 0 ||
+        strncmp(input + sizeof(command_prefix) - 1U, token, token_length) != 0) {
+        return false;
+    }
+    char next_character = input[sizeof(command_prefix) - 1U + token_length];
+    return next_character == ':' || next_character == '\0';
+}
+
+command_type_t identify_command_type(const char *input)
+{
+    if (command_token_matches(input, "MOV_CNT")) {
+        return COMMAND_MOV_CNT;
+    }
+    if (command_token_matches(input, "SET_CNT")) {
+        return COMMAND_SET_CNT;
+    }
+    if (command_token_matches(input, "VERSION")) {
+        return COMMAND_VERSION;
+    }
+    if (command_token_matches(input, "SET")) {
+        return COMMAND_SET;
+    }
+    if (command_token_matches(input, "MOV")) {
+        return COMMAND_MOV;
+    }
+    if (command_token_matches(input, "CNT")) {
+        return COMMAND_CNT;
+    }
+    return COMMAND_UNKNOWN;
+}
+
+const char *command_type_name(command_type_t command_type)
+{
+    switch (command_type) {
+    case COMMAND_SET:
+        return "SET";
+    case COMMAND_MOV:
+        return "MOV";
+    case COMMAND_MOV_CNT:
+        return "MOV_CNT";
+    case COMMAND_SET_CNT:
+        return "SET_CNT";
+    case COMMAND_VERSION:
+        return "VERSION";
+    case COMMAND_CNT:
+        return "CNT";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -430,6 +520,26 @@ void MYPROG_GetData(char *buffer, int size)
 
 }
 
+void MYPROG_SendAcknowledgement(const char *command, bool accepted, const char *reason)
+{
+	char acknowledgement[64];
+	int acknowledgement_length;
+	if (accepted)
+	{
+		acknowledgement_length = snprintf(acknowledgement, sizeof(acknowledgement),
+			"MSG:ACK:%s;\r\n", command);
+	}
+	else
+	{
+		acknowledgement_length = snprintf(acknowledgement, sizeof(acknowledgement),
+			"MSG:NAK:%s,%s;\r\n", command, reason);
+	}
+	if (acknowledgement_length > 0 && acknowledgement_length < (int)sizeof(acknowledgement))
+	{
+		MYPROG_SendData(acknowledgement, acknowledgement_length);
+	}
+}
+
 void MYPROG_main_loop()
 {
 	float settimer1 =0;
@@ -439,6 +549,10 @@ void MYPROG_main_loop()
 	char command_to_process[sizeof(rxBuffer_command)];
 	// True only when command_to_process contains a command to parse during this loop.
 	bool command_available = false;
+	bool oversized_command_available = false;
+	bool rejected_frame_available = false;
+	bool unable_to_parse_frame_available = false;
+	bool emergency_stop_ack_available = false;
 	// Snapshot used to detect an emergency stop received after the command was copied.
 	// Example: if this is 4 and stop_generation becomes 5, the copied command is cancelled.
 	uint32_t copied_stop_generation = 0;
@@ -464,7 +578,44 @@ void MYPROG_main_loop()
 		copied_stop_generation = stop_generation;
 		command_available = true;
 	}
+	else if (command_read == -1)
+	{
+		command_read = 0;
+		oversized_command_available = true;
+	}
+	if (rejected_frame_count > 0)
+	{
+		rejected_frame_count--;
+		rejected_frame_available = true;
+	}
+	if (unable_to_parse_frame_count > 0)
+	{
+		unable_to_parse_frame_count--;
+		unable_to_parse_frame_available = true;
+	}
+	if (emergency_stop_ack_count > 0)
+	{
+		emergency_stop_ack_count--;
+		emergency_stop_ack_available = true;
+	}
 	__enable_irq();
+
+	if (oversized_command_available)
+	{
+		MYPROG_SendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");
+	}
+	if (emergency_stop_ack_available)
+	{
+		MYPROG_SendAcknowledgement("EMERGENCY_STOP", true, NULL);
+	}
+	if (rejected_frame_available)
+	{
+		MYPROG_SendAcknowledgement("UNKNOWN", false, "REJECTED");
+	}
+	if (unable_to_parse_frame_available)
+	{
+		MYPROG_SendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");
+	}
 
 	if(command_available)
 	{
@@ -474,26 +625,41 @@ void MYPROG_main_loop()
 		float move_pitch = 0.0f;
     uint32_t azimuth_counter = 0;
     uint32_t elevation_counter = 0;
-		// These flags identify which supported command shape matched the private copy.
-		bool is_move_command = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
-		bool is_set_command = parse_set_command(command_to_process, &settimer1, &settimer2);
-		bool is_version_command = strcmp(command_to_process, "CMD:VERSION") == 0;
-    bool is_counter_get_command = strcmp(command_to_process, "CMD:CNT") == 0;
-    bool is_counter_move_command = parse_counter_command(
-        command_to_process,
-        "CMD:MOV_CNT:PAN=",
-        &azimuth_counter,
-        &elevation_counter
-    );
-    bool is_counter_set_command = parse_counter_command(
-        command_to_process,
-        "CMD:SET_CNT:PAN=",
-        &azimuth_counter,
-        &elevation_counter
-    );
+		command_type_t command_type = identify_command_type(command_to_process);
+		bool command_parsed = false;
+		bool command_rejected = false;
+		switch (command_type)
+		{
+		case COMMAND_MOV:
+			command_parsed = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
+			command_rejected = command_parsed &&
+				(move_yaw < -180.0f || move_yaw > 180.0f || move_pitch < -90.0f || move_pitch > 45.0f);
+			break;
+		case COMMAND_SET:
+			command_parsed = parse_set_command(command_to_process, &settimer1, &settimer2);
+			command_rejected = command_parsed &&
+				(settimer1 < -180.0f || settimer1 > 180.0f || settimer2 < -90.0f || settimer2 > 90.0f);
+			break;
+		case COMMAND_VERSION:
+			command_parsed = strcmp(command_to_process, "CMD:VERSION") == 0;
+			break;
+		case COMMAND_CNT:
+			command_parsed = strcmp(command_to_process, "CMD:CNT") == 0;
+			break;
+		case COMMAND_MOV_CNT:
+			command_parsed = parse_counter_command(command_to_process, "CMD:MOV_CNT:PAN=",
+				&azimuth_counter, &elevation_counter);
+			break;
+		case COMMAND_SET_CNT:
+			command_parsed = parse_counter_command(command_to_process, "CMD:SET_CNT:PAN=",
+				&azimuth_counter, &elevation_counter);
+			break;
+		default:
+			break;
+		}
 		// Set when an emergency stop invalidates the command while it is being parsed.
 		bool command_cancelled = false;
-    bool send_counter_response = false;
+		bool send_counter_response = false;
 
 		// Parsing happens with interrupts enabled. Pause them again only while applying
 		// the result, and first make sure p was not received during parsing.
@@ -502,81 +668,87 @@ void MYPROG_main_loop()
 		{
 			command_cancelled = true;
 		}
-    else if (is_counter_get_command)
-    {
-      azimuth_counter = TIM2->CNT;
-      elevation_counter = TIM1->CNT;
-      send_counter_response = true;
-    }
-    else if (is_counter_set_command)
-    {
-      move = 0;
-      move_az = 0;
-      move_el = 0;
-      mode = 0;
-
-      MYPROG_disable_az();
-      MYPROG_disable_el();
-
-      TIM2->CNT = azimuth_counter;
-      TIM1->CNT = elevation_counter;
-
-      azimuth_counter = TIM2->CNT;
-      elevation_counter = TIM1->CNT;
-
-      send_counter_response = true;
-    }
+		else if (!command_parsed || command_rejected)
+		{
+			move = 0;
+			mode = 0;
+			MYPROG_disable_az();
+			MYPROG_disable_el();
+		}
 		else
 		{
-			if (!is_version_command)
+			switch (command_type)
 			{
-				if (is_move_command || is_counter_move_command)
-				{
-					if (is_counter_move_command)
-					{
-						move_yaw = ((float)azimuth_counter - 43200.0f) / 240.0f;
-						move_pitch = ((float)elevation_counter - 21600.0f) / 240.0f;
-					}
-					Azc = move_yaw;
-					Elc = move_pitch;
-					move = 1;
-					mode = 0;
-				}
-				else
-				{
-					move = 0;
-				}
-
-				if (is_set_command)
-				{
-					TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f)); // elevation
-					TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f)); // azimuth
-				}
-
-				command_position_AZ = Azc;//(Azc*240)+21600;
-				command_position_EL = Elc;//(Elc*240)+21600;
+			case COMMAND_CNT:
+				azimuth_counter = TIM2->CNT;
+				elevation_counter = TIM1->CNT;
+				send_counter_response = true;
+				break;
+			case COMMAND_SET_CNT:
+				move = 0;
+				mode = 0;
+				MYPROG_disable_az();
+				MYPROG_disable_el();
+				TIM2->CNT = azimuth_counter;
+				TIM1->CNT = elevation_counter;
+				azimuth_counter = TIM2->CNT;
+				elevation_counter = TIM1->CNT;
+				send_counter_response = true;
+				break;
+			case COMMAND_MOV_CNT:
+				move_yaw = ((float)azimuth_counter - 43200.0f) / 240.0f;
+				move_pitch = ((float)elevation_counter - 21600.0f) / 240.0f;
+				/* fall through */
+			case COMMAND_MOV:
+				Azc = move_yaw;
+				Elc = move_pitch;
+				move = 1;
+				mode = 0;
+				command_position_AZ = Azc;
+				command_position_EL = Elc;
 				Az_speed = 255;
 				El_speed = 255;
+				break;
+			case COMMAND_SET:
+			{
+				move = 0;
+				mode = 0;
+				TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f));
+				TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f));
+				break;
+			}
+			default:
+				break;
 			}
 		}
 		__enable_irq();
 
-    if (!command_cancelled && send_counter_response)
-    {
-      int counter_message_length = snprintf(sendbuffer, sizeof(sendbuffer),
-      "MSG:CNT:PAN=%lu,TILT=%lu;\r\n",
-      (unsigned long)azimuth_counter,(unsigned long)elevation_counter);
+		bool command_accepted = !command_cancelled && command_parsed && !command_rejected;
+		if (command_accepted)
+		{
+			MYPROG_SendAcknowledgement(command_type_name(command_type), true, NULL);
+		}
+		else
+		{
+			const char *reason = command_rejected || command_cancelled ? "REJECTED" : "UNABLE_TO_PARSE";
+			MYPROG_SendAcknowledgement(command_type_name(command_type), false, reason);
+		}
 
-      if (counter_message_length > 0 && counter_message_length < (int)sizeof(sendbuffer))
-      {
-        MYPROG_SendData(sendbuffer, counter_message_length);
-      }
-    }
-    else if (!command_cancelled && is_version_command)
+		if (command_accepted && send_counter_response)
+		{
+			int counter_message_length = snprintf(sendbuffer, sizeof(sendbuffer),
+				"MSG:CNT:PAN=%lu,TILT=%lu;\r\n",
+				(unsigned long)azimuth_counter,(unsigned long)elevation_counter);
+			if (counter_message_length > 0 && counter_message_length < (int)sizeof(sendbuffer))
+			{
+				MYPROG_SendData(sendbuffer, counter_message_length);
+			}
+		}
+		else if (command_accepted && command_type == COMMAND_VERSION)
 		{
 			MYPROG_SendData(firmware_version_message, (int)sizeof(firmware_version_message) - 1);
 		}
-		else if (!command_cancelled)
+		else if (command_accepted && (command_type == COMMAND_MOV || command_type == COMMAND_MOV_CNT || command_type == COMMAND_SET))
 		{
 			// snprintf returns the message length without counting the final null byte.
 			int command_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "%.2f , %.2f \r\n", Azc, Elc);

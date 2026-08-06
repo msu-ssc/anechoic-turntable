@@ -23,6 +23,11 @@ directly. Both commands return
 diagnostic operations; setting counters changes the coordinate frame. See
 [`docs/protocol.md`](../docs/protocol.md) for exact framing and numeric rules.
 
+Every accepted command returns `MSG:ACK:<command>;` followed by CRLF. Rejected
+commands return `MSG:NAK:<command>,<reason>;` followed by CRLF and fail safe.
+The single-byte emergency stop disables motion immediately and returns an
+`EMERGENCY_STOP` ACK without delaying the motor stop.
+
 `CMD:MOV_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` converts the supplied
 counters to degrees using the configured zero counts and `240` counts per
 degree, then runs the existing degree-based movement logic. It is a diagnostic

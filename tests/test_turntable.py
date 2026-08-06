@@ -15,11 +15,13 @@ class FakeSerial:
         *,
         respond_to_moves=True,
         respond_to_sets=True,
+        acknowledge_commands=True,
         firmware_version="2.0.8",
         counters=(43200, 21600),
     ):
         self.respond_to_moves = respond_to_moves
         self.respond_to_sets = respond_to_sets
+        self.acknowledge_commands = acknowledge_commands
         self.firmware_version = firmware_version
         self.counters = counters
         self.writes = []
@@ -41,6 +43,9 @@ class FakeSerial:
     def write(self, data):
         with self._lock:
             self.writes.append(data)
+        command = self._command_name(data)
+        if self.acknowledge_commands and command is not None:
+            self.emit(f"MSG:ACK:{command};\r\n".encode())
         if data.startswith(b"CMD:SET:") and self.respond_to_sets:
             coordinates = data.removeprefix(b"CMD:SET:").removesuffix(b";")
             yaw, pitch = (float(value) for value in coordinates.split(b","))
@@ -65,6 +70,15 @@ class FakeSerial:
             self.counters = (int(pan), int(tilt))
             self.emit(f"MSG:CNT:PAN={self.counters[0]},TILT={self.counters[1]};\r\n".encode())
         return len(data)
+
+    @staticmethod
+    def _command_name(data):
+        if data == b"p":
+            return "EMERGENCY_STOP"
+        for command in ("MOV_CNT", "SET_CNT", "VERSION", "SET", "MOV", "CNT"):
+            if data.startswith(f"CMD:{command}".encode()):
+                return command
+        return None
 
     def close(self):
         self.closed = True
@@ -92,8 +106,15 @@ def make_turntable(fake, **kwargs):
         serial_connection=fake,
         poll_interval=0.001,
         communication_timeout=kwargs.pop("communication_timeout", 1.0),
+        acknowledgement_timeout=kwargs.pop("acknowledgement_timeout", 0.02),
         **kwargs,
     )
+
+
+@pytest.mark.parametrize("acknowledgement_timeout", [0, -1, float("inf"), float("nan")])
+def test_acknowledgement_timeout_must_be_finite_and_positive(acknowledgement_timeout):
+    with pytest.raises(ValueError, match="acknowledgement_timeout"):
+        make_turntable(FakeSerial(), acknowledgement_timeout=acknowledgement_timeout)
 
 
 def test_received_messages_are_immutable_and_hashable():
@@ -134,6 +155,41 @@ def test_counter_response_becomes_a_typed_event():
     assert event.pan == 12345
     assert event.tilt == 5555
     assert hash(event)
+
+
+@pytest.mark.parametrize(
+    ("message", "status", "command", "reason"),
+    [
+        (b"MSG:ACK:MOV_CNT;\r\n", "ACK", "MOV_CNT", None),
+        (b"MSG:ACK:EMERGENCY_STOP;\r\n", "ACK", "EMERGENCY_STOP", None),
+        (b"MSG:NAK:MOV_CNT,UNABLE_TO_PARSE;\r\n", "NAK", "MOV_CNT", "UNABLE_TO_PARSE"),
+        (b"MSG:NAK:UNKNOWN,REJECTED;\r\n", "NAK", "UNKNOWN", "REJECTED"),
+    ],
+)
+def test_acknowledgement_becomes_a_typed_event(message, status, command, reason):
+    event = turntable2.parse_received_message(message)
+
+    assert isinstance(event, turntable2.ReceivedMessageAcknowledgement)
+    assert event.kind == "acknowledgement"
+    assert (event.status, event.command, event.reason) == (status, command, reason)
+    assert hash(event)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        b"MSG:ACK:MOV\r\n",
+        b"MSG:ACK:MOV;\n",
+        b"MSG:ACK:BOGUS;\r\n",
+        b"MSG:ACK:UNKNOWN;\r\n",
+        b"MSG:ACK:MOV,REJECTED;\r\n",
+        b"MSG:NAK:MOV;\r\n",
+        b"MSG:NAK:MOV,BOGUS;\r\n",
+        b"prefix MSG:ACK:MOV;\r\n",
+    ],
+)
+def test_malformed_acknowledgement_becomes_an_other_event(message):
+    assert type(turntable2.parse_received_message(message)) is turntable2.ReceivedMessage
 
 
 @pytest.mark.parametrize(
@@ -239,6 +295,25 @@ def test_set_and_move_are_queued_with_direct_coordinates():
         assert all(sample.internal_position.yaw == sample.corrected_position.pan for sample in turntable.position_history())
         assert all(sample.internal_position.pitch == sample.corrected_position.tilt for sample in turntable.position_history())
         assert all(sample.internal_position != turntable2.YawPitch(yaw=4, pitch=2) for sample in turntable.position_history())
+    finally:
+        turntable.close()
+
+
+def test_next_command_waits_for_matching_acknowledgement_after_completion():
+    fake = FakeSerial(acknowledge_commands=False)
+    turntable = make_turntable(fake, acknowledgement_timeout=0.2)
+    try:
+        turntable.set_position(pan=0, tilt=0)
+        turntable.request_version()
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+
+        snapshot = turntable.get_complete_state()
+        assert snapshot.pending_acknowledgement_command == "SET"
+        assert b"CMD:VERSION;" not in fake.writes
+
+        fake.emit(b"MSG:ACK:SET;\r\n")
+
+        wait_for(lambda: b"CMD:VERSION;" in fake.writes)
     finally:
         turntable.close()
 
@@ -386,7 +461,7 @@ def test_move_does_not_send_intermediate_move_or_set_commands():
         complete_state = turntable.get_complete_state()
         assert complete_state.target_position == turntable2.PanTilt(pan=15, tilt=-40)
         assert complete_state.internal_target == turntable2.YawPitch(yaw=15, pitch=-40)
-        assert fake.writes[writes_before_move:] == [b"CMD:MOV:15.000,-40.000;"] * 3
+        assert fake.writes[writes_before_move:] == [b"CMD:MOV:15.000,-40.000;"]
     finally:
         turntable.close()
 
@@ -504,15 +579,55 @@ def test_abort_stops_the_active_move_and_cancels_queued_moves():
         turntable.move_to(pan=10, tilt=0)
         turntable.move_to(pan=20, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.MOVING)
+        writes_before_abort = len(fake.writes)
 
         turntable.abort()
 
         # ABORT bypasses the queue and performs the stop write before returning.
-        assert fake.writes[-1] == b"p"
+        assert fake.writes[writes_before_abort:] == [b"p"] * 5
         assert turntable.command_history()[-1].command == b"p"
         assert turntable.current_state() == turntable2.TurntableState.STOPPED
+        acknowledgement = wait_for(lambda: event if (event := turntable.most_recent_event(kind="acknowledgement")) is not None and event.command == "EMERGENCY_STOP" else None)
+        assert acknowledgement.status == "ACK"
         time.sleep(0.03)
         assert b"CMD:MOV:20.000,0.000;" not in fake.writes
+    finally:
+        turntable.close()
+
+
+def test_abort_uses_custom_repeat_count():
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        turntable.abort(repeat_count=2)
+
+        assert fake.writes == [b"p", b"p"]
+        assert [write.command for write in turntable.command_history()] == [b"p", b"p"]
+    finally:
+        turntable.close()
+
+
+@pytest.mark.parametrize("repeat_count", [0, -1, 1.5, True])
+def test_abort_rejects_invalid_repeat_count_without_writing(repeat_count):
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        with pytest.raises(ValueError, match="repeat_count"):
+            turntable.abort(repeat_count=repeat_count)
+
+        assert fake.writes == []
+    finally:
+        turntable.close()
+
+
+def test_abort_repeat_count_is_keyword_only():
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        with pytest.raises(TypeError):
+            turntable.abort(2)  # type: ignore[misc]
+
+        assert fake.writes == []
     finally:
         turntable.close()
 
@@ -641,7 +756,7 @@ def test_counter_set_waits_behind_an_active_move():
         turntable.close()
 
 
-def test_counter_move_is_repeated_and_tracks_translated_target():
+def test_counter_move_is_sent_once_after_ack_and_tracks_translated_target():
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
@@ -651,8 +766,8 @@ def test_counter_move_is_repeated_and_tracks_translated_target():
 
         turntable.move_to_counters(pan=45_600, tilt=20_400)
 
-        wait_for(lambda: len(fake.writes) >= writes_before_move + 3)
-        assert fake.writes[writes_before_move:] == [b"CMD:MOV_CNT:PAN=45600,TILT=20400;"] * 3
+        wait_for(lambda: len(fake.writes) >= writes_before_move + 1)
+        assert fake.writes[writes_before_move:] == [b"CMD:MOV_CNT:PAN=45600,TILT=20400;"]
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.NOT_SET)
         assert turntable.current_position() == turntable2.PanTilt(10, -5)
         assert not turntable.get_complete_state().has_been_set
@@ -673,6 +788,67 @@ def test_counter_move_uses_300_second_default_timeout():
         remaining = (snapshot.activity_timeout_at - snapshot.captured_at).total_seconds()
         assert remaining == pytest.approx(300, abs=1)
         assert snapshot.internal_target == turntable2.YawPitch(10, -5)
+    finally:
+        turntable.close()
+
+
+def test_command_is_retried_only_while_acknowledgement_is_missing():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake, command_repetitions=3)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        fake.acknowledge_commands = False
+        writes_before_move = len(fake.writes)
+
+        turntable.move_to(pan=10, tilt=0, move_timeout=1)
+
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.ERROR)
+        move_frame = b"CMD:MOV:10.000,0.000;"
+        assert fake.writes[writes_before_move:].count(move_frame) == 3
+        assert fake.writes[writes_before_move:].count(b"p") == 5
+        assert isinstance(turntable.last_error(), TimeoutError)
+        assert "No acknowledgement received for MOV" in str(turntable.last_error())
+    finally:
+        turntable.close()
+
+
+def test_matching_nak_fails_move_without_retry_and_stops_motion():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake, command_repetitions=3)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        fake.acknowledge_commands = False
+        writes_before_move = len(fake.writes)
+
+        turntable.move_to(pan=10, tilt=0, move_timeout=1)
+        wait_for(lambda: b"CMD:MOV:10.000,0.000;" in fake.writes)
+        fake.emit(b"MSG:NAK:MOV,REJECTED;\r\n")
+
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.ERROR)
+        assert fake.writes[writes_before_move:] == [b"CMD:MOV:10.000,0.000;", *([b"p"] * 5)]
+        assert "Firmware rejected MOV: REJECTED" in str(turntable.last_error())
+        event = turntable.most_recent_event(kind="acknowledgement")
+        assert event.status == "NAK"
+    finally:
+        turntable.close()
+
+
+def test_unmatched_acknowledgement_does_not_release_pending_command():
+    fake = FakeSerial(respond_to_moves=False, acknowledge_commands=False)
+    turntable = make_turntable(fake, command_repetitions=2)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0, timeout=1)
+        wait_for(lambda: b"CMD:SET:0.000,0.000;" in fake.writes)
+        fake.emit(b"MSG:ACK:MOV;\r\n")
+
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.ERROR)
+        assert fake.writes.count(b"CMD:SET:0.000,0.000;") == 2
+        assert "No acknowledgement received for SET" in str(turntable.last_error())
     finally:
         turntable.close()
 
@@ -721,7 +897,7 @@ def test_move_timeout_aborts_and_is_observable():
 
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.TIMED_OUT)
         assert isinstance(turntable.last_error(), TimeoutError)
-        assert b"p" in fake.writes
+        assert fake.writes.count(b"p") == 5
     finally:
         turntable.close()
 
@@ -763,6 +939,22 @@ def test_communication_timeout_resets_controller_to_not_set():
 
         fake.emit_internal_position(yaw=0, pitch=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.NOT_SET)
+    finally:
+        turntable.close()
+
+
+def test_communication_loss_during_move_sends_default_stop_repetitions():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake, communication_timeout=0.05)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+
+        turntable.move_to(pan=10, tilt=0, move_timeout=1)
+
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.NO_COMMUNICATION)
+        assert fake.writes.count(b"p") == 5
     finally:
         turntable.close()
 
