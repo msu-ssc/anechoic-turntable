@@ -49,3 +49,7 @@ BUGFIX: Transmit only the formatted bytes in firmware messages.
 ## 2.1.0 — 2026-08-01
 
 Add support for the `CMD:VERSION?` command
+
+## 2.2.0 — 2026-08-06
+
+Add `CMD:CNT;` and `CMD:CNT:PAN=12345,TILT=12345;` commands to get/set encoder position
