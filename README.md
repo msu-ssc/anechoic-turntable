@@ -32,7 +32,9 @@ automatic timeout; Confirm approves the currently reported position without
 sending a SET command. The Raw
 and Parsed panels show received serial events, with a message-type filter for
 the parsed stream. The Commands panel shows both operator/controller output and
-the exact bytes written to the serial connection.
+the exact bytes written to the serial connection. Parsed ACK and NAK events and
+the latest or pending command acknowledgement are shown in the diagnostic
+streams and controller summary.
 
 The command field also accepts `connect`, `info`, `confirm`, `set`, `mov`,
 `set_cnt pan=<integer> tilt=<integer>`, `mov_cnt pan=<integer> tilt=<integer>`,
@@ -40,7 +42,8 @@ The command field also accepts `connect`, `info`, `confirm`, `set`, `mov`,
 set, move to, or query firmware encoder counters for diagnostics; setting
 counters clears the controller's trusted position. `stop` and the red
 emergency-stop button immediately cancel queued work and send the firmware stop
-byte. `raw` sends its
+byte five consecutive times. Controller-triggered safety stops use the same
+default count. `raw` sends its
 ASCII argument exactly once without protocol or coordinate validation; it is
 for controlled firmware diagnostics only, and normal movement remains disabled
 until the position is set or confirmed again. Serial-port discovery runs in the

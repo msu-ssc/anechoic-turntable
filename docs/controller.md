@@ -34,15 +34,15 @@ was made; they do not report the firmware actually installed on a connected
 turntable. `__version__` is an alias for `CONTROLLER_VERSION` and matches the
 installed Python distribution version.
 
-`request_version()` queues `CMD:VERSION;` once and returns immediately without
+`request_version()` queues `CMD:VERSION;` and returns immediately without
 changing trusted position state. The corresponding exact firmware response is
 available as `most_recent_event(kind="version")`, a
 `ReceivedMessageVersion` whose `version` field contains the semantic version.
 Version responses do not count as position communication for timeout purposes.
 
-`request_counters()` queues `CMD:CNT;` once without changing trusted position
+`request_counters()` queues `CMD:CNT;` without changing trusted position
 state. `set_counters(pan=..., tilt=...)` accepts unsigned 32-bit integer encoder
-counts and queues the corresponding SET_CNT frame once. Exact responses are
+counts and queues the corresponding SET_CNT frame. Exact responses are
 available as `most_recent_event(kind="counter")`, a
 `ReceivedMessageCounter` whose `pan` and `tilt` fields contain the raw counter
 values read back by firmware. Counter responses do not count as position
@@ -56,7 +56,8 @@ normal serialized command queue and wait behind an active SET, MOV, or MOV_CNT.
 
 `move_to_counters(pan=..., tilt=..., move_timeout=300.0)` queues a tracked
 MOV_CNT operation using unsigned 32-bit encoder-counter targets. The controller
-repeats the exact frame three times. Firmware converts the targets to degrees
+sends the frame once and retries only if its acknowledgement is missing.
+Firmware converts the targets to degrees
 using pan zero `43200`, tilt zero `21600`, and `240` counts per degree, then
 uses its normal MOV logic. The controller tracks the same converted target and
 sends the immediate stop byte if the operation exceeds its timeout or loses
@@ -70,9 +71,17 @@ safe.
 processed in order. `move_to` sends physical pan and tilt directly as firmware
 yaw and pitch. By default, its timeout is calculated when the queued move
 starts, so earlier queued moves are reflected in the starting position.
-`abort` is the exception: it immediately
-invalidates the active operation and every queued command, writes the stop
-command, and returns only after that write has been attempted.
+Every protocol command is written once, then the controller waits up to 0.25
+seconds for its matching ACK or NAK. A missing acknowledgement is retried up to
+three total attempts by default. A NAK, or exhaustion of those attempts, clears
+queued work and enters `ERROR`; uncertain movement is stopped immediately.
+`abort(*, repeat_count=5)` is the exception: it immediately invalidates the
+active operation and every queued command, writes the stop byte consecutively
+five times by default, and returns only after every requested write has been
+attempted. `repeat_count` must be an integer greater than or equal to one. The
+TUI emergency-stop and shutdown paths use the default. Automatic timeout,
+communication-loss, command-rejection, and acknowledgement-exhaustion stops
+also send five consecutive stop bytes.
 
 `confirm_position()` is available when the firmware is already reporting a
 trusted position and sending SET would be undesirable. It adopts the current
@@ -132,6 +141,8 @@ under the controller lock. It includes:
   raw position);
 - `most_recent_position_event`, `most_recent_event`, and the five
   `recent_events` used by live diagnostics;
+- `most_recent_acknowledgement` and `pending_acknowledgement_command` for
+  command acceptance diagnostics;
 - `state`, `activity`, its detailed `activity_phase`, and `has_been_set`;
 - the active operation's corrected `target_position`, `internal_target`, and
   timezone-aware `activity_timeout_at`;
@@ -163,6 +174,7 @@ Every received line becomes an immutable, hashable `ReceivedMessage`.
 Successfully parsed position lines become `ReceivedMessagePosition` events.
 Exact firmware version responses become `ReceivedMessageVersion` events, and
 exact encoder-counter responses become `ReceivedMessageCounter` events.
+Exact ACK and NAK frames become `ReceivedMessageAcknowledgement` events.
 These events intentionally preserve raw firmware yaw and pitch. Use
 `current_position()` or `get_complete_state().corrected_position` for physical
 pan and tilt.

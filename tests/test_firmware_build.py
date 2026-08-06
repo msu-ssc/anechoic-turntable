@@ -73,4 +73,17 @@ def test_counter_commands_use_exact_frames_and_existing_degree_targets() -> None
     assert '"CMD:CNT:PAN="' not in main_source
     assert "move_yaw = ((float)azimuth_counter - 43200.0f) / 240.0f;" in main_source
     assert "move_pitch = ((float)elevation_counter - 21600.0f) / 240.0f;" in main_source
-    assert "if (is_move_command || is_counter_move_command)" in main_source
+    assert "case COMMAND_MOV_CNT:" in main_source
+    assert "case COMMAND_MOV:" in main_source
+
+
+def test_firmware_acknowledges_accepted_and_rejected_commands() -> None:
+    """Command results and emergency stop use exact ACK/NAK framing."""
+
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert '"MSG:ACK:%s;\\r\\n"' in main_source
+    assert '"MSG:NAK:%s,%s;\\r\\n"' in main_source
+    assert 'MYPROG_SendAcknowledgement("EMERGENCY_STOP", true, NULL);' in main_source
+    assert 'MYPROG_SendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");' in main_source
+    assert "command_rejected = command_parsed" in main_source

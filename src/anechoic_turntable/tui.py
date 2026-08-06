@@ -30,6 +30,7 @@ from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.controller import TurntableCompleteState
 from anechoic_turntable.controller import TurntableError
 from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
@@ -45,7 +46,7 @@ from anechoic_turntable.session import parse_counter_values
 from anechoic_turntable.turntable import Turntable
 
 _COMMAND_HELP = "Commands: connect | info | confirm | set az=<number> el=<number> | mov az=<number> el=<number> | set_cnt pan=<integer> tilt=<integer> | mov_cnt pan=<integer> tilt=<integer> | counter? | raw <ASCII bytes> | stop | help | exit"
-_MESSAGE_KINDS = ("position", "version", "counter", "other")
+_MESSAGE_KINDS = ("position", "version", "counter", "acknowledgement", "other")
 
 
 class _TurntableTuiSession(TurntableSession):
@@ -489,6 +490,12 @@ class TurntableTui(App[None]):
             f"activity: {activity}    queue: {snapshot.queued_command_count}",
             f"communication: {communication}",
         ]
+        if snapshot.pending_acknowledgement_command is not None:
+            controller_lines.append(f"acknowledgement: pending {snapshot.pending_acknowledgement_command}")
+        elif snapshot.most_recent_acknowledgement is not None:
+            acknowledgement = snapshot.most_recent_acknowledgement
+            reason = "" if acknowledgement.reason is None else f" ({acknowledgement.reason})"
+            controller_lines.append(f"acknowledgement: {acknowledgement.status} {acknowledgement.command}{reason}")
         if snapshot.last_error is None or not snapshot.last_error.startswith("TimeoutError:") or snapshot.state.value == "timed_out":
             self._timeout_error_hidden = False
         elif snapshot.activity.value == "moving":
@@ -701,6 +708,9 @@ class TurntableTui(App[None]):
             return f"version: {event.version}"
         if isinstance(event, ReceivedMessageCounter):
             return f"counter: pan={event.pan} tilt={event.tilt}"
+        if isinstance(event, ReceivedMessageAcknowledgement):
+            reason = "" if event.reason is None else f" ({event.reason})"
+            return f"{event.status.lower()}: {event.command}{reason}"
         return "other"
 
 

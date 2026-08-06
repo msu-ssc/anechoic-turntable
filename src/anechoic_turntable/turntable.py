@@ -12,6 +12,7 @@ import serial
 from typing_extensions import Self
 
 from anechoic_turntable.controller import COUNTER_MOVE_TIMEOUT_SECONDS
+from anechoic_turntable.controller import EMERGENCY_STOP_REPEAT_COUNT
 from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.controller import ControllerThread
 from anechoic_turntable.controller import PositionSample
@@ -19,6 +20,7 @@ from anechoic_turntable.controller import TurntableCompleteState
 from anechoic_turntable.controller import TurntableError
 from anechoic_turntable.controller import TurntableState
 from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
@@ -42,6 +44,7 @@ class Turntable:
         baudrate: int = 9_600,
         timeout: float = 0.1,
         communication_timeout: float = 1.0,
+        acknowledgement_timeout: float = 0.25,
         command_repetitions: int = 3,
         event_history_size: int = 1_000,
         poll_interval: float = 0.01,
@@ -74,6 +77,7 @@ class Turntable:
             serial_connection=self._serial,
             received_messages=received_messages,
             communication_timeout=communication_timeout,
+            acknowledgement_timeout=acknowledgement_timeout,
             command_repetitions=command_repetitions,
             event_history_size=event_history_size,
             poll_interval=poll_interval,
@@ -89,6 +93,7 @@ class Turntable:
         baudrate: int = 9_600,
         timeout: float = 0.1,
         communication_timeout: float = 1.0,
+        acknowledgement_timeout: float = 0.25,
         discovery_timeout: float = 2.0,
         command_repetitions: int = 3,
         event_history_size: int = 1_000,
@@ -112,6 +117,7 @@ class Turntable:
                     baudrate=baudrate,
                     timeout=timeout,
                     communication_timeout=communication_timeout,
+                    acknowledgement_timeout=acknowledgement_timeout,
                     command_repetitions=command_repetitions,
                     event_history_size=event_history_size,
                     poll_interval=poll_interval,
@@ -193,10 +199,10 @@ class Turntable:
 
         self._controller.submit_counter_move(pan=pan, tilt=tilt, timeout=move_timeout)
 
-    def abort(self) -> None:
-        """Immediately stop movement and invalidate all queued commands."""
+    def abort(self, *, repeat_count: int = EMERGENCY_STOP_REPEAT_COUNT) -> None:
+        """Immediately stop movement with repeated bytes and invalidate queued commands."""
 
-        self._controller.submit_abort()
+        self._controller.submit_abort(repeat_count=repeat_count)
 
     def current_state(self) -> TurntableState:
         return self._controller.current_state()
@@ -219,6 +225,9 @@ class Turntable:
 
     @overload
     def most_recent_event(self, *, kind: Literal["counter"]) -> ReceivedMessageCounter | None: ...
+
+    @overload
+    def most_recent_event(self, *, kind: Literal["acknowledgement"]) -> ReceivedMessageAcknowledgement | None: ...
 
     @overload
     def most_recent_event(self, *, kind: Literal["other"]) -> ReceivedMessage | None: ...

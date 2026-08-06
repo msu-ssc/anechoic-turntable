@@ -13,6 +13,7 @@ from anechoic_turntable import TurntableState
 from anechoic_turntable import YawPitch
 from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
@@ -44,6 +45,7 @@ class FakeTurntable:
                 for index in range(1, 7)
             ),
             ReceivedMessageCounter(message=b"MSG:CNT:PAN=12345,TILT=5555;\r\n", pan=12345, tilt=5555),
+            ReceivedMessageAcknowledgement(message=b"MSG:ACK:CNT;\r\n", status="ACK", command="CNT"),
         )
         self.command_writes = (CommandWrite(timestamp=datetime.datetime.now(datetime.timezone.utc), command=b"CMD:VERSION;"),)
         self.snapshot = SimpleNamespace(
@@ -56,6 +58,8 @@ class FakeTurntable:
             recent_events=self.receive_events,
             seconds_since_last_communication=0.04,
             queued_command_count=0,
+            pending_acknowledgement_command=None,
+            most_recent_acknowledgement=self.receive_events[-1],
             last_error=None,
         )
 
@@ -173,8 +177,21 @@ def test_tui_queues_counter_set_move_and_query_commands():
             assert table.counter_moves == [(45600, 20400, 300.0)]
             assert table.counter_requests == 1
             assert "counter: pan=12345 tilt=5555" in rendered_text(app.query_one("#serial-parsed", Static))
+            assert "ack: CNT" in rendered_text(app.query_one("#serial-parsed", Static))
+            assert "acknowledgement: ACK CNT" in rendered_text(app.query_one("#controller", Static))
 
     asyncio.run(exercise())
+
+
+def test_tui_formats_negative_acknowledgement_status():
+    event = ReceivedMessageAcknowledgement(
+        message=b"MSG:NAK:MOV,REJECTED;\r\n",
+        status="NAK",
+        command="MOV",
+        reason="REJECTED",
+    )
+
+    assert TurntableTui._format_parsed_event(event) == "nak: MOV (REJECTED)"
 
 
 def test_tui_rejects_malformed_counter_commands():
@@ -303,7 +320,7 @@ def test_tui_move_set_and_filter_controls():
             await pilot.click("#filter-parsed")
             app.screen.query_one("#filter-position", Checkbox).value = False
             await pilot.click("#apply-filter")
-            assert rendered_text(app.query_one("#serial-parsed", Static)) == "other\nversion: 1.2.3\ncounter: pan=12345 tilt=5555"
+            assert rendered_text(app.query_one("#serial-parsed", Static)) == "other\nversion: 1.2.3\ncounter: pan=12345 tilt=5555\nack: CNT"
 
         assert table.abort_calls == 1
 

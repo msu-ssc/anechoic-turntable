@@ -1,5 +1,5 @@
 # Turntable Firmware–Controller Protocol Contract
-PROTOCOL_VERSION=2.3.0
+PROTOCOL_VERSION=3.0.0
 
 This document is the authoritative contract between the STM32 turntable
 firmware and the Python controller. If an implementation differs from this
@@ -20,7 +20,7 @@ This contract specifies:
 - controller-to-firmware command frames;
 - firmware-to-controller position, version, and encoder-counter reports;
 - raw coordinate semantics;
-- command repetition and completion behavior;
+- command acknowledgement, retry, and completion behavior;
 - timeout and error expectations.
 
 For SET and MOV, the controller sends physical pan/tilt directly as the
@@ -142,6 +142,9 @@ The controller accepts public SET values within:
 - pan/yaw: `[-180.0, 180.0]` degrees;
 - tilt/pitch: `[-90.0, 90.0]` degrees.
 
+Firmware MUST reject an otherwise well-formed SET outside these inclusive
+bounds with `REJECTED` and MUST NOT change either counter.
+
 ### MOV
 
 `CMD:MOV` commands the firmware to move both axes toward the supplied raw yaw
@@ -158,6 +161,9 @@ The controller accepts physical move requests within:
 
 - pan: `[-180.0, 180.0]` degrees;
 - tilt: `[-90.0, 45.0]` degrees.
+
+Firmware MUST reject an otherwise well-formed MOV outside these inclusive
+bounds with `REJECTED` and MUST NOT begin that movement.
 
 The controller sends those requested values directly as yaw and pitch. Firmware
 used with this controller MUST represent the complete range without relying on
@@ -185,10 +191,11 @@ once.
 
 MOV_CNT is a diagnostic operation and does not establish a trusted physical
 coordinate frame. The controller accepts unsigned 32-bit counter fields,
-repeats the frame three times, tracks the converted degree target, and uses a
-300-second timeout by default. On timeout or communication loss it MUST send
-the immediate stop byte. The operator is responsible for choosing targets
-that the configured timer periods and physical mechanism can safely reach.
+sends the frame once with acknowledgement-based retries, tracks the converted
+degree target, and uses a 300-second timeout by default. On timeout or
+communication loss it MUST send the immediate stop byte. The operator is
+responsible for choosing targets that the configured timer periods and
+physical mechanism can safely reach.
 
 ### SET_CNT
 
@@ -232,14 +239,27 @@ p
 It has no semicolon or newline.
 
 On receipt, firmware MUST immediately disable motion on both axes and cancel
-the active move. Position reporting MUST continue. No ACK is required.
+the active move. Position reporting MUST continue. Firmware MUST emit
+`MSG:ACK:EMERGENCY_STOP;\r\n`; transmission of this acknowledgement may occur
+after the motors have been disabled and MUST NOT delay the immediate stop.
 
-The controller sends stop once when:
+Every controller-side immediate stop writes `p` consecutively five times by
+default. `abort(*, repeat_count=5)` immediately invalidates active and queued
+work, then uses its keyword-only `repeat_count`; the method returns after every
+requested write has been attempted. `repeat_count` MUST be an integer greater
+than or equal to one. The diagnostic TUI emergency-stop and disconnect paths
+use the default.
 
-- `abort()` is requested;
+Firmware treats every `p` as an independent accepted emergency-stop command
+and emits one `MSG:ACK:EMERGENCY_STOP;\r\n` for each byte. The controller does
+not wait for these acknowledgements and does not retry an individual stop byte.
+
+The same default of five consecutive writes applies when:
+
 - an active move loses communication;
-- a SET or MOV operation times out;
-- the diagnostic TUI disconnects from a live controller.
+- a SET, MOV, or MOV_CNT operation times out;
+- a MOV or MOV_CNT receives a NAK;
+- a MOV or MOV_CNT exhausts its acknowledgement attempts.
 
 Bytes such as `a`, `d`, `w`, and `s` that may be recognized by historical
 firmware are outside this contract. Normal controller operations MUST NOT send
@@ -266,26 +286,47 @@ required semicolon. Unknown bytes and unsafe coordinate targets retain the
 firmware behavior described elsewhere in this contract; the controller provides
 no completion tracking for a raw command.
 
-## Command repetition and idempotence
+## Command acknowledgement, retry, and idempotence
 
-By default, the controller writes each SET, MOV, and MOV_CNT frame three times.
-The copies may be adjacent with no delay:
+Firmware MUST emit exactly one acknowledgement for every accepted or rejected
+command. Acknowledgements are CRLF-terminated exact frames:
 
 ```text
-CMD:MOV:15.000,-40.000;CMD:MOV:15.000,-40.000;CMD:MOV:15.000,-40.000;
+MSG:ACK:<command>;\r\n
+MSG:NAK:<command>,<reason>;\r\n
 ```
 
-Firmware MUST parse each semicolon-terminated frame independently and MUST
-tolerate duplicate SET, MOV, and MOV_CNT frames. Repeating an identical frame
-MUST be idempotent: it must not alter the meaning of the requested reference or
-target.
+`<command>` is one of `SET`, `MOV`, `MOV_CNT`, `SET_CNT`, `VERSION`, `CNT`,
+`EMERGENCY_STOP`, or `UNKNOWN`. `UNKNOWN` is valid only in a NAK. `<reason>` is
+one of:
 
-The repetition count is controller-configurable and MUST NOT be used by
-firmware as part of framing or validation.
+- `UNABLE_TO_PARSE`: the command was malformed, incomplete, oversized, or
+  unknown;
+- `REJECTED`: the complete command was understood but was not accepted, for
+  example because coordinates were outside firmware bounds or another complete
+  frame could not be queued.
 
-The controller writes each VERSION request, CNT query, and SET_CNT command
-exactly once. Firmware MUST still treat repeated VERSION, CNT, and SET_CNT
-frames independently and return one response per request.
+An ACK means the complete command was received, parsed, accepted, and applied.
+For VERSION, CNT, and SET_CNT, firmware MUST send the ACK before the command's
+specific VERSION or CNT response. A NAK means that the requested operation was
+not performed. Firmware MUST fail safe and stop motion when rejecting input.
+
+The controller sends a queued protocol command once and waits 0.25 seconds for
+a matching ACK or NAK before retrying. By default, at most three total attempts
+are made; `command_repetitions` configures this maximum attempt count. A
+matching ACK prevents all further attempts. A mismatched or malformed
+acknowledgement remains diagnostic data and MUST NOT release the pending
+command.
+
+After the configured attempts receive no acknowledgement, the controller MUST
+fail the command, clear queued work, and enter `ERROR`. If MOV or MOV_CNT may
+have been accepted, it MUST also send immediate stop. If SET or SET_CNT may
+have been accepted, it MUST discard its trusted coordinate state.
+
+Firmware MUST parse every semicolon-terminated frame independently and tolerate
+retries. Repeating an identical valid frame MUST be idempotent: it must not
+alter the meaning of the requested reference or target. Each accepted retry is
+ACKed and produces any command-specific response independently.
 
 ## Firmware-to-controller counter responses
 
@@ -305,7 +346,7 @@ MSG:CNT:PAN=12345,TILT=5555;\r\n
 The controller parses an exact conforming response as a counter event.
 Malformed or otherwise non-matching lines remain diagnostic/other events. A
 counter response does not count as a position report and therefore does not
-reset the communication timeout.
+reset the communication timeout. The command ACK precedes this response.
 
 ## Firmware-to-controller version responses
 
@@ -327,7 +368,7 @@ MSG:VERSION:2.0.8;\r\n
 The controller parses an exact conforming response as a version event.
 Malformed or otherwise non-matching lines remain diagnostic/other events. A
 version response does not count as a position report and therefore does not
-reset the communication timeout.
+reset the communication timeout. The command ACK precedes this response.
 
 ## Firmware-to-controller position reports
 
@@ -379,8 +420,8 @@ serial scheduling and host latency.
 
 ## Acknowledgement and completion
 
-The protocol defines no ACK or NACK frame. SET, MOV, and MOV_CNT completion is
-inferred from position reports.
+ACK confirms command acceptance, not physical completion. SET, MOV, and
+MOV_CNT completion continues to be inferred from position reports.
 
 The controller considers a raw target reached when both axes are within
 `0.11` degrees of the expected raw yaw and pitch.
@@ -402,14 +443,15 @@ prefix.
 ## Ordering
 
 The controller serializes SET, MOV, MOV_CNT, SET_CNT, VERSION, CNT, and
-diagnostic raw operations. It does not begin the next queued operation until
-position reports confirm an active SET, MOV, or MOV_CNT operation. VERSION,
-CNT, and SET_CNT operations do not wait for their responses before the next
-queued command is eligible to begin.
+diagnostic raw operations. It does not begin the next queued protocol command
+until the current command is ACKed. It also waits for position reports to
+confirm an active SET, MOV, or MOV_CNT operation. VERSION, CNT, and SET_CNT do
+not wait for their command-specific responses after ACK before the next queued
+command is eligible to begin.
 
-Each normal move produces one MOV frame (repeated according to the configured
-repetition count) with the requested physical pan and tilt. The controller MUST
-NOT insert intermediate MOV or SET operations.
+Each normal move produces one MOV frame with the requested physical pan and
+tilt, with retries only when its acknowledgement is missing. The controller
+MUST NOT insert intermediate MOV or SET operations.
 
 Immediate stop is the exception to normal ordering and may be written while an
 operation is active.
@@ -423,10 +465,13 @@ safe:
 - it MUST NOT read or write outside command buffers;
 - it SHOULD discard input through the next semicolon to resynchronize;
 - it MUST continue position reporting;
-- it MAY emit a diagnostic line.
+- it MUST emit a NAK once the rejected frame can be classified or discarded.
 
-Because no NACK is defined, the controller will detect failure through lack of
-target confirmation or loss of valid position reports.
+Firmware uses the recognized command token in a NAK when possible. It uses
+`UNKNOWN` when the token cannot be determined, including for an oversized
+frame whose buffered prefix has been discarded. An unterminated partial frame
+cannot be acknowledged until it is terminated, discarded as oversized, or
+interrupted by emergency stop.
 
 ## Current implementation deviations
 

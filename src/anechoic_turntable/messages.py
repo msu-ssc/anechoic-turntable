@@ -13,7 +13,13 @@ from pydantic import Field
 _POSITION_PATTERN = re.compile(rb"Pos= El: (?P<pitch>-?\d{1,3}\.\d{2}) , Az: (?P<yaw>-?\d{1,3}\.\d{2})")
 _VERSION_PATTERN = re.compile(rb"MSG:VERSION:(?P<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*));\r\n\Z")
 _COUNTER_PATTERN = re.compile(rb"MSG:CNT:PAN=(?P<pan>0|[1-9]\d*),TILT=(?P<tilt>0|[1-9]\d*);\r\n\Z")
+_ACK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|VERSION|CNT|EMERGENCY_STOP)"
+_NAK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|VERSION|CNT|EMERGENCY_STOP|UNKNOWN)"
+_ACKNOWLEDGEMENT_PATTERN = re.compile(rb"MSG:(?P<status>ACK):(?P<command>" + _ACK_COMMAND_NAME + rb");\r\n\Z")
+_NEGATIVE_ACKNOWLEDGEMENT_PATTERN = re.compile(rb"MSG:(?P<status>NAK):(?P<command>" + _NAK_COMMAND_NAME + rb"),(?P<reason>UNABLE_TO_PARSE|REJECTED);\r\n\Z")
 _UINT32_MAX = 2**32 - 1
+
+CommandName = Literal["SET", "MOV", "MOV_CNT", "SET_CNT", "VERSION", "CNT", "EMERGENCY_STOP", "UNKNOWN"]
 
 
 def _utc_now() -> datetime.datetime:
@@ -25,7 +31,7 @@ class ReceivedMessage(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    kind: Literal["position", "version", "counter", "other"] = "other"
+    kind: Literal["position", "version", "counter", "acknowledgement", "other"] = "other"
     message: bytes
     timestamp: datetime.datetime = Field(default_factory=_utc_now)
 
@@ -58,6 +64,15 @@ class ReceivedMessageCounter(ReceivedMessage):
     tilt: int
 
 
+class ReceivedMessageAcknowledgement(ReceivedMessage):
+    """A firmware ACK or NAK for one command type."""
+
+    kind: Literal["acknowledgement"] = "acknowledgement"
+    status: Literal["ACK", "NAK"]
+    command: CommandName
+    reason: Literal["UNABLE_TO_PARSE", "REJECTED"] | None = None
+
+
 def parse_received_message(
     message: bytes,
     *,
@@ -66,6 +81,19 @@ def parse_received_message(
     """Parse one wire message into the smallest useful event."""
 
     timestamp = timestamp or _utc_now()
+    acknowledgement_match = _ACKNOWLEDGEMENT_PATTERN.fullmatch(message)
+    if acknowledgement_match is None:
+        acknowledgement_match = _NEGATIVE_ACKNOWLEDGEMENT_PATTERN.fullmatch(message)
+    if acknowledgement_match is not None:
+        reason = acknowledgement_match.groupdict().get("reason")
+        return ReceivedMessageAcknowledgement(
+            message=message,
+            timestamp=timestamp,
+            status=acknowledgement_match.group("status").decode("ascii"),
+            command=acknowledgement_match.group("command").decode("ascii"),
+            reason=None if reason is None else reason.decode("ascii"),
+        )
+
     version_match = _VERSION_PATTERN.fullmatch(message)
     if version_match is not None:
         return ReceivedMessageVersion(

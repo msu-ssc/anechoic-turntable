@@ -15,6 +15,7 @@ from typing import Literal
 from typing import overload
 
 from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
@@ -30,6 +31,8 @@ UINT32_MAX = 2**32 - 1
 MOVE_TIMEOUT_ESTIMATE_MULTIPLIER = 1.5
 MOVE_TIMEOUT_MARGIN_SECONDS = 5.0
 COUNTER_MOVE_TIMEOUT_SECONDS = 300.0
+ACKNOWLEDGEMENT_TIMEOUT_SECONDS = 0.25
+EMERGENCY_STOP_REPEAT_COUNT = 5
 COUNTS_PER_DEGREE = 240.0
 PAN_ZERO_COUNTER = 43_200
 TILT_ZERO_COUNTER = 21_600
@@ -89,6 +92,7 @@ class TurntableCompleteState:
     corrected_position: PanTilt | None
     most_recent_position_event: ReceivedMessagePosition | None
     most_recent_event: ReceivedMessage | None
+    most_recent_acknowledgement: ReceivedMessageAcknowledgement | None
     recent_events: tuple[ReceivedMessage, ...]
     last_communication_at: datetime.datetime | None
     seconds_since_last_communication: float
@@ -97,6 +101,7 @@ class TurntableCompleteState:
     target_position: PanTilt | None
     internal_target: YawPitch | None
     queued_command_count: int
+    pending_acknowledgement_command: str | None
     has_been_set: bool
     set_requested: bool
     last_error: str | None
@@ -176,6 +181,16 @@ class _MoveOperation:
 _Operation = _SetOperation | _MoveOperation
 
 
+@dataclasses.dataclass
+class _PendingAcknowledgement:
+    command: str
+    frame: bytes
+    attempts: int
+    deadline: float
+    stop_on_failure: bool
+    invalidates_position_on_uncertainty: bool
+
+
 class ControllerThread(threading.Thread):
     """Consume receive events and commands, and serialize all device writes."""
 
@@ -185,6 +200,7 @@ class ControllerThread(threading.Thread):
         received_messages: queue.Queue[ReceivedMessage],
         *,
         communication_timeout: float = 1.0,
+        acknowledgement_timeout: float = ACKNOWLEDGEMENT_TIMEOUT_SECONDS,
         command_repetitions: int = 3,
         event_history_size: int = 1_000,
         poll_interval: float = 0.01,
@@ -193,6 +209,8 @@ class ControllerThread(threading.Thread):
         super().__init__(name="turntable-controller", daemon=True)
         if communication_timeout <= 0:
             raise ValueError("communication_timeout must be greater than zero")
+        if not math.isfinite(acknowledgement_timeout) or acknowledgement_timeout <= 0:
+            raise ValueError("acknowledgement_timeout must be a finite number greater than zero")
         if command_repetitions < 1:
             raise ValueError("command_repetitions must be at least one")
         if event_history_size < 1:
@@ -203,6 +221,7 @@ class ControllerThread(threading.Thread):
         self._serial = serial_connection
         self._received_messages = received_messages
         self._communication_timeout = communication_timeout
+        self._acknowledgement_timeout = acknowledgement_timeout
         self._command_repetitions = command_repetitions
         self._poll_interval = poll_interval
         self._logger = logger or logging.getLogger(__name__)
@@ -210,6 +229,7 @@ class ControllerThread(threading.Thread):
         self._command_queue: queue.Queue[_Command] = queue.Queue()
         self._queued_commands: deque[_Command] = deque()
         self._operation: _Operation | None = None
+        self._pending_acknowledgement: _PendingAcknowledgement | None = None
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
         self._command_generation = 0
@@ -356,9 +376,10 @@ class ControllerThread(threading.Thread):
                 )
             )
 
-    def submit_abort(self) -> None:
-        """Immediately stop movement and invalidate all previously submitted work."""
+    def submit_abort(self, *, repeat_count: int = EMERGENCY_STOP_REPEAT_COUNT) -> None:
+        """Immediately invalidate queued work and send repeated stop bytes."""
 
+        _validate_repeat_count(repeat_count)
         with self._lock:
             self._ensure_open()
             self._operation = None
@@ -366,7 +387,7 @@ class ControllerThread(threading.Thread):
             self._set_requested = False
             if self._state != TurntableState.NO_COMMUNICATION:
                 self._state = TurntableState.STOPPED if self._has_been_set else TurntableState.NOT_SET
-            self._write_command(b"p", repetitions=1)
+            self._write_stop(repeat_count=repeat_count)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -387,6 +408,9 @@ class ControllerThread(threading.Thread):
             position_event = self._most_recent_by_kind.get("position")
             if not isinstance(position_event, ReceivedMessagePosition):
                 position_event = None
+            acknowledgement = self._most_recent_by_kind.get("acknowledgement")
+            if not isinstance(acknowledgement, ReceivedMessageAcknowledgement):
+                acknowledgement = None
 
             timeout_at: datetime.datetime | None = None
             target_position: PanTilt | None = None
@@ -422,6 +446,7 @@ class ControllerThread(threading.Thread):
                 corrected_position=self._corrected_position,
                 most_recent_position_event=position_event,
                 most_recent_event=self._events[-1] if self._events else None,
+                most_recent_acknowledgement=acknowledgement,
                 recent_events=tuple(self._events)[-5:],
                 last_communication_at=self._last_communication_at,
                 seconds_since_last_communication=time.monotonic() - self._most_recent_communication,
@@ -430,6 +455,7 @@ class ControllerThread(threading.Thread):
                 target_position=target_position,
                 internal_target=internal_target,
                 queued_command_count=len(self._queued_commands) + self._command_queue.qsize(),
+                pending_acknowledgement_command=(None if self._pending_acknowledgement is None else self._pending_acknowledgement.command),
                 has_been_set=self._has_been_set,
                 set_requested=self._set_requested,
                 last_error=error,
@@ -448,6 +474,9 @@ class ControllerThread(threading.Thread):
     def most_recent_event(self, *, kind: Literal["counter"]) -> ReceivedMessageCounter | None: ...
 
     @overload
+    def most_recent_event(self, *, kind: Literal["acknowledgement"]) -> ReceivedMessageAcknowledgement | None: ...
+
+    @overload
     def most_recent_event(self, *, kind: Literal["other"]) -> ReceivedMessage | None: ...
 
     @overload
@@ -457,7 +486,7 @@ class ControllerThread(threading.Thread):
         with self._lock:
             if kind is None:
                 return self._events[-1] if self._events else None
-            if kind not in {"position", "version", "counter", "other"}:
+            if kind not in {"position", "version", "counter", "acknowledgement", "other"}:
                 raise ValueError(f"Unknown event kind: {kind!r}")
             return self._most_recent_by_kind.get(kind)
 
@@ -527,6 +556,9 @@ class ControllerThread(threading.Thread):
 
     def _handle_received_message(self, event: ReceivedMessage) -> None:
         self._record_event(event)
+        if isinstance(event, ReceivedMessageAcknowledgement):
+            self._handle_acknowledgement(event)
+            return
         if not isinstance(event, ReceivedMessagePosition):
             return
         if event.yaw is None or event.pitch is None:
@@ -575,6 +607,20 @@ class ControllerThread(threading.Thread):
                 )
             )
 
+    def _handle_acknowledgement(self, event: ReceivedMessageAcknowledgement) -> None:
+        with self._lock:
+            pending = self._pending_acknowledgement
+            if pending is None or event.command != pending.command:
+                return
+            self._pending_acknowledgement = None
+            if event.status == "NAK":
+                reason = event.reason or "unspecified reason"
+                self._fail_acknowledged_command(
+                    TurntableError(f"Firmware rejected {event.command}: {reason}"),
+                    pending=pending,
+                    uncertain=False,
+                )
+
     def _record_event(self, event: ReceivedMessage) -> None:
         with self._lock:
             self._events.append(event)
@@ -588,7 +634,7 @@ class ControllerThread(threading.Thread):
             if now - reference > self._communication_timeout:
                 if self._state != TurntableState.NO_COMMUNICATION:
                     if isinstance(operation, _MoveOperation):
-                        self._write_command(b"p", repetitions=1)
+                        self._write_stop()
                     self._state = TurntableState.NO_COMMUNICATION
                     self._has_been_set = False
                     self._set_requested = False
@@ -597,16 +643,32 @@ class ControllerThread(threading.Thread):
                 return
 
             if operation is not None and now > operation.deadline:
-                self._write_command(b"p", repetitions=1)
+                self._write_stop()
                 self._last_error = TimeoutError("Turntable command timed out")
                 self._operation = None
                 self._invalidate_pending_commands()
                 self._set_requested = False
                 self._state = TurntableState.TIMED_OUT
+                self._pending_acknowledgement = None
+                return
+
+            pending = self._pending_acknowledgement
+            if pending is not None and now > pending.deadline:
+                if pending.attempts < self._command_repetitions:
+                    pending.attempts += 1
+                    pending.deadline = now + self._acknowledgement_timeout
+                    self._write_command(pending.frame)
+                else:
+                    self._pending_acknowledgement = None
+                    self._fail_acknowledged_command(
+                        TimeoutError(f"No acknowledgement received for {pending.command}"),
+                        pending=pending,
+                        uncertain=True,
+                    )
 
     def _start_next_command(self) -> None:
         with self._lock:
-            if self._operation is not None or not self._queued_commands or self._state == TurntableState.NO_COMMUNICATION:
+            if self._operation is not None or self._pending_acknowledgement is not None or not self._queued_commands or self._state == TurntableState.NO_COMMUNICATION:
                 return
             command = self._queued_commands.popleft()
             if command.generation != self._command_generation:
@@ -628,11 +690,11 @@ class ControllerThread(threading.Thread):
 
     def _send_version_request(self, command: _VersionCommand) -> None:
         if command.generation == self._command_generation:
-            self._write_command(b"CMD:VERSION;", repetitions=1)
+            self._write_acknowledged_command(b"CMD:VERSION;", command="VERSION")
 
     def _send_counter_request(self, command: _CounterRequestCommand) -> None:
         if command.generation == self._command_generation:
-            self._write_command(b"CMD:CNT;", repetitions=1)
+            self._write_acknowledged_command(b"CMD:CNT;", command="CNT")
 
     def _send_counter_set(self, command: _CounterSetCommand) -> None:
         with self._lock:
@@ -648,9 +710,10 @@ class ControllerThread(threading.Thread):
             self._corrected_position = None
             if self._state != TurntableState.NO_COMMUNICATION:
                 self._state = TurntableState.NOT_SET
-            self._write_command(
+            self._write_acknowledged_command(
                 f"CMD:SET_CNT:PAN={command.pan},TILT={command.tilt};".encode("ascii"),
-                repetitions=1,
+                command="SET_CNT",
+                invalidates_position_on_uncertainty=True,
             )
 
     def _send_raw(self, command: _RawCommand) -> None:
@@ -667,7 +730,7 @@ class ControllerThread(threading.Thread):
             self._corrected_position = None
             if self._state != TurntableState.NO_COMMUNICATION:
                 self._state = TurntableState.NOT_SET
-            self._write_command(command.payload, repetitions=1)
+            self._write_command(command.payload)
 
     def _begin_set(self, command: _SetCommand) -> None:
         with self._lock:
@@ -682,7 +745,11 @@ class ControllerThread(threading.Thread):
                 timeout_at=timeout_at,
             )
             self._state = TurntableState.NOT_SET
-            self._write_command(_format_set_command(yaw=command.pan, pitch=command.tilt))
+            self._write_acknowledged_command(
+                _format_set_command(yaw=command.pan, pitch=command.tilt),
+                command="SET",
+                invalidates_position_on_uncertainty=True,
+            )
 
     def _begin_move(self, command: _MoveCommand) -> None:
         with self._lock:
@@ -715,7 +782,11 @@ class ControllerThread(threading.Thread):
             )
             self._operation = operation
             self._state = TurntableState.MOVING
-            self._write_command(_format_move_command(yaw=command.pan, pitch=command.tilt))
+            self._write_acknowledged_command(
+                _format_move_command(yaw=command.pan, pitch=command.tilt),
+                command="MOV",
+                stop_on_failure=True,
+            )
 
     def _begin_counter_move(self, command: _CounterMoveCommand) -> None:
         with self._lock:
@@ -732,30 +803,79 @@ class ControllerThread(threading.Thread):
                 phase="counter",
             )
             self._state = TurntableState.MOVING
-            self._write_command(f"CMD:MOV_CNT:PAN={command.pan},TILT={command.tilt};".encode("ascii"))
+            self._write_acknowledged_command(
+                f"CMD:MOV_CNT:PAN={command.pan},TILT={command.tilt};".encode("ascii"),
+                command="MOV_CNT",
+                stop_on_failure=True,
+            )
 
-    def _write_command(self, command: bytes, *, repetitions: int | None = None) -> None:
+    def _write_acknowledged_command(
+        self,
+        frame: bytes,
+        *,
+        command: str,
+        stop_on_failure: bool = False,
+        invalidates_position_on_uncertainty: bool = False,
+    ) -> None:
+        if self._pending_acknowledgement is not None:
+            raise RuntimeError("Cannot write a second command while an acknowledgement is pending")
+        pending = _PendingAcknowledgement(
+            command=command,
+            frame=frame,
+            attempts=1,
+            deadline=time.monotonic() + self._acknowledgement_timeout,
+            stop_on_failure=stop_on_failure,
+            invalidates_position_on_uncertainty=invalidates_position_on_uncertainty,
+        )
+        self._pending_acknowledgement = pending
+        self._write_command(frame)
+
+    def _fail_acknowledged_command(
+        self,
+        error: Exception,
+        *,
+        pending: _PendingAcknowledgement,
+        uncertain: bool,
+    ) -> None:
+        if pending.stop_on_failure:
+            self._write_stop()
+        if uncertain and pending.invalidates_position_on_uncertainty:
+            self._has_been_set = False
+            self._corrected_position = None
+        self._last_error = error
+        self._operation = None
+        self._set_requested = False
+        self._invalidate_pending_commands()
+        self._state = TurntableState.ERROR
+
+    def _write_command(self, command: bytes) -> None:
         with self._lock:
-            repetitions = repetitions if repetitions is not None else self._command_repetitions
             try:
-                for _ in range(repetitions):
-                    timestamp = _utc_now()
-                    written = self._serial.write(command)
-                    byte_count = len(command) if written is None else max(0, min(written, len(command)))
-                    if byte_count:
-                        self._command_history.append(
-                            CommandWrite(
-                                timestamp=timestamp,
-                                command=command[:byte_count],
-                            )
+                timestamp = _utc_now()
+                written = self._serial.write(command)
+                byte_count = len(command) if written is None else max(0, min(written, len(command)))
+                if byte_count:
+                    self._command_history.append(
+                        CommandWrite(
+                            timestamp=timestamp,
+                            command=command[:byte_count],
                         )
+                    )
             except Exception as exc:
                 self._logger.exception("Failed to write command to the turntable")
                 self._last_error = exc
                 self._operation = None
+                self._pending_acknowledgement = None
+                self._invalidate_pending_commands()
+                self._set_requested = False
                 self._state = TurntableState.ERROR
 
+    def _write_stop(self, *, repeat_count: int = EMERGENCY_STOP_REPEAT_COUNT) -> None:
+        for _ in range(repeat_count):
+            self._write_command(b"p")
+
     def _invalidate_pending_commands(self) -> None:
+        self._pending_acknowledgement = None
         self._command_generation += 1
         self._queued_commands.clear()
         self._command_queue = queue.Queue()
@@ -779,6 +899,11 @@ def _make_deadline(timeout: float) -> tuple[float, datetime.datetime]:
 def _validate_timeout(timeout: float) -> None:
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be a finite number greater than zero")
+
+
+def _validate_repeat_count(repeat_count: int) -> None:
+    if isinstance(repeat_count, bool) or not isinstance(repeat_count, int) or repeat_count < 1:
+        raise ValueError("repeat_count must be an integer greater than or equal to one")
 
 
 def _validate_counter(name: str, value: int) -> None:
