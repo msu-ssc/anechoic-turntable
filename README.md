@@ -35,7 +35,9 @@ The experiment UI connects in the background, displays live pan, tilt, and
 signed PWM, and requires explicit position confirmation before starting. Its
 large red **STOP EXPERIMENT** button immediately requests the repeated stop
 bytes. Each PWM attempt is limited by time and displacement and is recorded in
-a timestamped CSV file. Defaults cover ten pan positions, ten tilt positions,
+a timestamped CSV file under `./local` by default. The log shows each signed PWM
+attempt and its outcome before reporting the threshold found. Defaults cover ten
+pan positions, ten tilt positions,
 five repetitions, both directions, and PWM magnitudes 100 through 150 in steps
 of five. The default upper tilt is 40° to retain margin below the encoder
 endpoint. Every candidate is approached from three degrees below the test pan,

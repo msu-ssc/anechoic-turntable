@@ -14,6 +14,7 @@ from anechoic_turntable import TurntableState
 from anechoic_turntable.pwm_experiment import ExperimentConfig
 from anechoic_turntable.pwm_experiment import PwmExperimentApp
 from anechoic_turntable.pwm_experiment import PwmExperimentRunner
+from anechoic_turntable.pwm_experiment import _default_output_path
 from anechoic_turntable.pwm_experiment import linspace
 
 
@@ -90,12 +91,14 @@ def test_runner_records_each_successful_direction_and_stops_output(tmp_path) -> 
     table = FakeTurntable()
     config = compact_config(tmp_path)
     state_updates = []
+    log_messages = []
 
     PwmExperimentRunner(
         table,  # type: ignore[arg-type]
         config,
         threading.Event(),
         state_callback=lambda status, progress, pwm: state_updates.append((status, progress, pwm)),
+        log_callback=log_messages.append,
     ).run()
 
     with config.output_path.open(newline="", encoding="utf-8") as result_file:
@@ -106,6 +109,20 @@ def test_runner_records_each_successful_direction_and_stops_output(tmp_path) -> 
     assert table.pwm == 0
     assert table.abort_count >= len(rows)
     assert state_updates[-1][0] == "complete"
+    assert any("trying PWM -100" in message for message in log_messages)
+    assert any("PWM -100: movement detected" in message for message in log_messages)
+    assert any("threshold PWM magnitude 100" in message for message in log_messages)
+
+
+def test_default_output_path_creates_local_directory(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    output_path = _default_output_path()
+
+    assert output_path.parent == tmp_path / "local"
+    assert output_path.parent.is_dir()
+    assert output_path.name.startswith("azimuth_pwm_experiment_")
+    assert output_path.suffix == ".csv"
 
 
 def test_config_requires_room_for_repeatable_approach(tmp_path) -> None:

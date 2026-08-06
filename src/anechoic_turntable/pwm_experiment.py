@@ -183,7 +183,7 @@ class PwmExperimentRunner:
                                     direction=direction,
                                     progress=progress,
                                 )
-                                threshold_text = "no start" if threshold is None else f"PWM {threshold}"
+                                threshold_text = "no start" if threshold is None else f"threshold PWM magnitude {threshold}"
                                 self._log_callback(f"{progress}: {threshold_text}")
                                 completed_threshold_searches += 1
             finally:
@@ -207,6 +207,8 @@ class PwmExperimentRunner:
             self._check_stopped()
             self._set_state("positioning", f"{progress}  candidate={pwm}", 0)
             self._reposition_and_settle(pan=pan, tilt=tilt)
+            signed_pwm = direction * pwm
+            self._log_callback(f"{progress}: trying PWM {signed_pwm:+d}")
             result = self._try_pwm(
                 pan=pan,
                 tilt=tilt,
@@ -217,6 +219,8 @@ class PwmExperimentRunner:
             )
             writer.writerow(asdict(result))
             output_file.flush()
+            outcome = "movement detected" if result.started_moving else f"no movement ({result.stop_reason})"
+            self._log_callback(f"{progress}: PWM {result.signed_pwm:+d}: {outcome}; delta pan={result.delta_pan_degrees:+.3f}°; elapsed={result.elapsed_seconds:.3f}s")
             if result.started_moving:
                 return pwm
         return None
@@ -576,12 +580,14 @@ class PwmExperimentApp(App[None]):
 
 def _default_output_path() -> Path:
     timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
-    return Path.cwd() / f"azimuth_pwm_experiment_{timestamp}.csv"
+    output_directory = Path.cwd() / "local"
+    output_directory.mkdir(exist_ok=True)
+    return output_directory / f"azimuth_pwm_experiment_{timestamp}.csv"
 
 
 def _parse_arguments() -> ExperimentConfig:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=None, help="CSV output path (default: timestamped file in the current directory)")
+    parser.add_argument("--output", type=Path, default=None, help="CSV output path (default: timestamped file in ./local)")
     parser.add_argument("--tilt-min", type=float, default=-85.0)
     parser.add_argument("--tilt-max", type=float, default=40.0, help="defaults below the +45 degree encoder endpoint")
     parser.add_argument("--tilt-count", type=int, default=10)
