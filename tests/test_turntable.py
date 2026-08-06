@@ -88,7 +88,7 @@ class FakeSerial:
             self._input.extend(message)
 
     def emit_internal_position(self, *, yaw, pitch):
-        self.emit(f"Pos= El: {pitch:.2f} , Az: {yaw:.2f} \r\n".encode())
+        self.emit(f"MSG:POS:PAN={yaw:.3f},TILT={pitch:.3f}\r\n".encode())
 
 
 def wait_for(predicate, *, timeout=1.0):
@@ -118,12 +118,12 @@ def test_acknowledgement_timeout_must_be_finite_and_positive(acknowledgement_tim
 
 
 def test_received_messages_are_immutable_and_hashable():
-    event = turntable2.parse_received_message(b"Pos= El: -12.34 , Az: 56.78 \r\n")
+    event = turntable2.parse_received_message(b"MSG:POS:PAN=-123.456,TILT=87.654\r\n")
 
     assert isinstance(event, turntable2.ReceivedMessagePosition)
     assert event.kind == "position"
-    assert event.yaw == 56.78
-    assert event.pitch == -12.34
+    assert event.yaw == -123.456
+    assert event.pitch == 87.654
     assert event.timestamp.tzinfo is not None
     assert hash(event)
     with pytest.raises(ValidationError):
@@ -136,6 +136,21 @@ def test_non_position_input_becomes_an_other_event():
     assert type(event) is turntable2.ReceivedMessage
     assert event.kind == "other"
     assert event.message == b"garbage\r\n"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        b"MSG:POS:PAN=1.00,TILT=2.000\r\n",
+        b"MSG:POS:PAN=1.000,TILT=2.000;\r\n",
+        b"MSG:POS:TILT=2.000,PAN=1.000\r\n",
+        b"MSG:POS:PAN=+1.000,TILT=2.000\r\n",
+        b"prefix MSG:POS:PAN=1.000,TILT=2.000\r\n",
+        b"MSG:POS:PAN=1.000,TILT=2.000\n",
+    ],
+)
+def test_malformed_position_report_becomes_an_other_event(message):
+    assert type(turntable2.parse_received_message(message)) is turntable2.ReceivedMessage
 
 
 def test_version_response_becomes_a_typed_event():
@@ -228,8 +243,8 @@ def test_serial_listener_frames_fragmented_lines():
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
-        fake.emit(b"junk\r\nPos= El: 1")
-        fake.emit(b"2.34 , Az: -5.67 \r\n")
+        fake.emit(b"junk\r\nMSG:POS:PAN=-5")
+        fake.emit(b".670,TILT=12.340\r\n")
 
         event = wait_for(lambda: turntable.most_recent_event(kind="position"))
 

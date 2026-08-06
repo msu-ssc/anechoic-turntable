@@ -38,7 +38,7 @@ class FakeTurntable:
             ReceivedMessageVersion(message=b"MSG:VERSION:1.2.3;\r\n", version="1.2.3"),
             *(
                 ReceivedMessagePosition(
-                    message=f"Pos= El: -3.00 , Az: {index:.2f}\r\n".encode(),
+                    message=f"MSG:POS:PAN={index:.3f},TILT=-3.000\r\n".encode(),
                     yaw=float(index),
                     pitch=-3.0,
                 )
@@ -124,15 +124,15 @@ def test_tui_connects_updates_state_and_queues_commands():
         async with app.run_test():
             submit(app, "connect")
             submit(app, "confirm")
-            submit(app, "mov az=-3.5 el=4")
+            submit(app, "mov pan=-3.5 tilt=4")
             app.refresh_controller_state()
 
             assert rendered_text(app.query_one("#connection", Static)) == "status: stopped    port: /dev/fake0"
-            assert rendered_text(app.query_one("#azimuth", Static)) == "az: 12.000°"
-            assert rendered_text(app.query_one("#elevation", Static)) == "el: 5.000°"
-            assert "Az: 6.00" in rendered_text(app.query_one("#serial-raw", Static))
+            assert rendered_text(app.query_one("#azimuth", Static)) == "pan: 12.000°"
+            assert rendered_text(app.query_one("#elevation", Static)) == "tilt: 5.000°"
+            assert "PAN=6.000" in rendered_text(app.query_one("#serial-raw", Static))
             assert "version: 1.2.3" not in rendered_text(app.query_one("#serial-parsed", Static))
-            assert "position: az=6.0 el=-3.0" in rendered_text(app.query_one("#serial-parsed", Static))
+            assert "position: pan=6.0 tilt=-3.0" in rendered_text(app.query_one("#serial-parsed", Static))
             assert rendered_text(app.query_one("#command-raw", Static)) == "b'CMD:VERSION;'"
             assert table.move_calls == [(-3.5, 4.0, None)]
             assert table.confirm_calls == 1
@@ -267,7 +267,7 @@ def test_tui_rejects_malformed_position_commands():
 
         async with app.run_test():
             submit(app, "connect")
-            submit(app, "set az=12")
+            submit(app, "set pan=12")
 
             assert table.set_calls == []
 

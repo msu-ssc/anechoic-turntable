@@ -14,7 +14,7 @@ from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.turntable import Turntable
 
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
-_COORDINATE = re.compile(rf"(?P<axis>az|el)=(?P<value>{_NUMBER})\Z")
+_COORDINATE = re.compile(rf"(?P<axis>pan|tilt)=(?P<value>{_NUMBER})\Z")
 _COUNTER = re.compile(r"(?P<axis>pan|tilt)=(?P<value>\d+)\Z")
 _UINT32_MAX = 2**32 - 1
 
@@ -29,10 +29,10 @@ class NotConnectedError(TurntableError):
 
 @dataclass(frozen=True)
 class Coordinates:
-    """Physical azimuth and elevation parsed from command arguments."""
+    """Physical pan and tilt parsed from command arguments."""
 
-    azimuth: float
-    elevation: float
+    pan: float
+    tilt: float
 
 
 @dataclass(frozen=True)
@@ -59,27 +59,27 @@ class ConnectionResult:
 
 
 def parse_coordinates(arguments: str) -> Coordinates:
-    """Parse exactly one ``az=`` and one ``el=`` argument in either order."""
+    """Parse exactly one ``pan=`` and one ``tilt=`` argument in either order."""
 
     tokens = arguments.split()
     if len(tokens) != 2:
-        raise CommandSyntaxError("expected: az=<number> el=<number>")
+        raise CommandSyntaxError("expected: pan=<number> tilt=<number>")
 
     values: dict[str, float] = {}
     for token in tokens:
         match = _COORDINATE.fullmatch(token)
         if match is None:
-            raise CommandSyntaxError("expected: az=<number> el=<number>")
+            raise CommandSyntaxError("expected: pan=<number> tilt=<number>")
 
         axis = match.group("axis")
         if axis in values:
             raise CommandSyntaxError(f"{axis}= may only be given once")
         values[axis] = float(match.group("value"))
 
-    if values.keys() != {"az", "el"}:
-        raise CommandSyntaxError("both az= and el= are required")
+    if values.keys() != {"pan", "tilt"}:
+        raise CommandSyntaxError("both pan= and tilt= are required")
 
-    return Coordinates(azimuth=values["az"], elevation=values["el"])
+    return Coordinates(pan=values["pan"], tilt=values["tilt"])
 
 
 def parse_counter_values(arguments: str) -> CounterValues:
@@ -190,10 +190,10 @@ class TurntableSession:
             raise NotConnectedError("not connected")
 
         operation = turntable.set_position if command == "set" else turntable.move_to
-        operation(pan=coordinates.azimuth, tilt=coordinates.elevation)
+        operation(pan=coordinates.pan, tilt=coordinates.tilt)
 
     def confirm_position(self) -> PanTilt:
-        """Approve the currently reported azimuth and elevation."""
+        """Approve the currently reported pan and tilt."""
 
         with self._lock:
             turntable = self._turntable

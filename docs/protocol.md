@@ -1,5 +1,5 @@
 # Turntable Firmware–Controller Protocol Contract
-PROTOCOL_VERSION=3.0.0
+PROTOCOL_VERSION=3.1.0
 
 This document is the authoritative contract between the STM32 turntable
 firmware and the Python controller. If an implementation differs from this
@@ -23,9 +23,9 @@ This contract specifies:
 - command acknowledgement, retry, and completion behavior;
 - timeout and error expectations.
 
-For SET and MOV, the controller sends physical pan/tilt directly as the
-yaw/pitch coordinates in the historical wire fields named `Az` and `El`.
-MOV_CNT instead carries raw counter targets that firmware converts to degrees.
+For SET and MOV, the controller sends physical pan/tilt directly as yaw/pitch
+coordinates. MOV_CNT instead carries raw counter targets that firmware converts
+to degrees.
 
 ## Transport
 
@@ -52,11 +52,11 @@ adapter before connection.
 
 The protocol carries raw firmware coordinates measured in degrees:
 
-- The `Az` field is called **yaw** inside the controller.
-- The `El` field is called **pitch** inside the controller.
+- The `PAN` report field is called **yaw** inside the controller.
+- The `TILT` report field is called **pitch** inside the controller.
 
 The controller's public API uses physical **pan** and **tilt**. The diagnostic
-shell exposes those values as `az` and `el`. Pan and yaw are numerically equal,
+shell exposes those values as `pan` and `tilt`. Pan and yaw are numerically equal,
 as are tilt and pitch.
 
 The firmware MUST treat command coordinates as yaw and pitch. Neither firmware
@@ -87,7 +87,7 @@ Examples:
 180.000
 ```
 
-Firmware position reports use exactly two digits after the decimal point as
+Firmware position reports use exactly three digits after the decimal point as
 specified below.
 
 Encoder counters are unsigned 32-bit integers encoded as canonical decimal
@@ -376,29 +376,28 @@ Firmware MUST continuously emit CRLF-terminated position reports with this
 exact structure:
 
 ```text
-Pos= El: <pitch> , Az: <yaw> \r\n
+MSG:POS:PAN=<yaw>,TILT=<pitch>\r\n
 ```
 
 Each number MUST:
 
 - contain an optional `-` sign;
 - contain one to three digits before the decimal point;
-- contain exactly two digits after the decimal point;
+- contain exactly three digits after the decimal point;
 - use no leading `+` and no exponential notation.
 
 Canonical examples:
 
 ```text
-Pos= El: 0.00 , Az: 0.00 \r\n
-Pos= El: -40.00 , Az: 15.00 \r\n
+MSG:POS:PAN=0.000,TILT=0.000\r\n
+MSG:POS:PAN=15.000,TILT=-40.000\r\n
 ```
 
-The spaces shown above are required. The firmware MUST transmit only the bytes
-that form the report; it MUST NOT append NUL bytes or uninitialized buffer
-contents.
+The firmware MUST transmit only the bytes that form the report; it MUST NOT
+append NUL bytes or uninitialized buffer contents.
 
-The controller frames incoming messages at LF (`\n`). A line containing a
-matching position report becomes a position event; other complete lines become
+The controller frames incoming messages at LF (`\n`). An exact matching
+position report becomes a position event; other complete lines become
 diagnostic/other events.
 
 Only a valid position report counts as live firmware communication. Arbitrary

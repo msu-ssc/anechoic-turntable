@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
-_POSITION_PATTERN = re.compile(rb"Pos= El: (?P<pitch>-?\d{1,3}\.\d{2}) , Az: (?P<yaw>-?\d{1,3}\.\d{2})")
+_POSITION_PATTERN = re.compile(rb"MSG:POS:PAN=(?P<yaw>-?\d{1,3}\.\d{3}),TILT=(?P<pitch>-?\d{1,3}\.\d{3})\r\n\Z")
 _VERSION_PATTERN = re.compile(rb"MSG:VERSION:(?P<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*));\r\n\Z")
 _COUNTER_PATTERN = re.compile(rb"MSG:CNT:PAN=(?P<pan>0|[1-9]\d*),TILT=(?P<tilt>0|[1-9]\d*);\r\n\Z")
 _ACK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|VERSION|CNT|EMERGENCY_STOP)"
@@ -39,9 +39,9 @@ class ReceivedMessage(BaseModel):
 class ReceivedMessagePosition(ReceivedMessage):
     """A raw position report containing the firmware's relative coordinates.
 
-    The firmware labels these values ``Az`` and ``El`` on the wire. Within
-    ``turntable2`` they are called yaw and pitch to distinguish them from the
-    physical pan and tilt used by the public API.
+    The firmware labels these values ``PAN`` and ``TILT`` on the wire. Within
+    the controller they remain yaw and pitch to distinguish raw firmware state
+    from the physical pan and tilt used by the public API.
     """
 
     kind: Literal["position"] = "position"
@@ -114,7 +114,7 @@ def parse_received_message(
                 tilt=tilt,
             )
 
-    match = _POSITION_PATTERN.search(message)
+    match = _POSITION_PATTERN.fullmatch(message)
     if match is None:
         return ReceivedMessage(message=message, timestamp=timestamp)
 

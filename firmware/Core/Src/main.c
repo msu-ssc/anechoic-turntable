@@ -780,7 +780,7 @@ void MYPROG_main_loop()
 
 
 	// Example: send through the report's \n, but not the unused remainder of sendbuffer.
-	int position_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "Pos= El: %.2f , Az: %.2f \r\n", El_pos_deg, Az_pos_deg);
+	int position_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "MSG:POS:PAN=%.3f,TILT=%.3f\r\n", Az_pos_deg, El_pos_deg);
 	if (position_message_length > 0 && position_message_length < (int)sizeof(sendbuffer))
 	{
 		MYPROG_SendData(sendbuffer, position_message_length);
