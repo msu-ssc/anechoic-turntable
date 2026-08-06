@@ -34,6 +34,14 @@ degree, then runs the existing degree-based movement logic. It is a diagnostic
 operation: targets must be reachable within the configured timer periods and
 safe for the physical mechanism.
 
+For controlled motor characterization, `CMD:PWM_AZ:<power>;` and
+`CMD:PWM_EL:<power>;` accept signed integer PWM power from `-255` through
+`255`. Each command cancels automatic motion, disables both axes, and then
+drives only the selected axis; zero leaves both disabled. Nonzero power persists
+until replaced or stopped, so keep the mechanism clear and use the immediate
+stop control during every bench test. These commands are diagnostics, not
+normal position-control operations.
+
 ## Command-line build
 
 The version-controlled STM32CubeIDE managed-build descriptions under `Debug/`

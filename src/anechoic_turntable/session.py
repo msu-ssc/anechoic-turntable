@@ -17,6 +17,8 @@ _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 _COORDINATE = re.compile(rf"(?P<axis>pan|tilt)=(?P<value>{_NUMBER})\Z")
 _COUNTER = re.compile(r"(?P<axis>pan|tilt)=(?P<value>\d+)\Z")
 _UINT32_MAX = 2**32 - 1
+_PWM_POWER_MIN = -255
+_PWM_POWER_MAX = 255
 
 
 class CommandSyntaxError(ValueError):
@@ -105,6 +107,18 @@ def parse_counter_values(arguments: str) -> CounterValues:
     if values.keys() != {"pan", "tilt"}:
         raise CommandSyntaxError("both pan= and tilt= are required")
     return CounterValues(pan=values["pan"], tilt=values["tilt"])
+
+
+def parse_pwm_power(arguments: str) -> int:
+    """Parse one signed integer PWM power in the firmware-supported range."""
+
+    tokens = arguments.split()
+    if len(tokens) != 1 or re.fullmatch(r"[+-]?\d+", tokens[0]) is None:
+        raise CommandSyntaxError("expected one integer power from -255 through 255")
+    power = int(tokens[0])
+    if not _PWM_POWER_MIN <= power <= _PWM_POWER_MAX:
+        raise CommandSyntaxError("power must be from -255 through 255")
+    return power
 
 
 class TurntableSession:
@@ -246,6 +260,18 @@ class TurntableSession:
         if turntable is None:
             raise NotConnectedError("not connected")
         turntable.move_to_counters(pan=counters.pan, tilt=counters.tilt)
+
+    def set_pwm(self, axis: Literal["az", "el"], power: int) -> None:
+        """Set persistent signed PWM power for one diagnostic axis."""
+
+        if axis not in {"az", "el"}:
+            raise ValueError("PWM axis must be 'az' or 'el'")
+        with self._lock:
+            turntable = self._turntable
+        if turntable is None:
+            raise NotConnectedError("not connected")
+        operation = turntable.set_azimuth_pwm if axis == "az" else turntable.set_elevation_pwm
+        operation(power)
 
     def stop(self) -> None:
         """Immediately stop the connected turntable and cancel queued work."""

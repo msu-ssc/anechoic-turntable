@@ -1,5 +1,5 @@
 # Turntable Firmware–Controller Protocol Contract
-PROTOCOL_VERSION=3.1.0
+PROTOCOL_VERSION=3.2.0
 
 This document is the authoritative contract between the STM32 turntable
 firmware and the Python controller. If an implementation differs from this
@@ -19,7 +19,7 @@ This contract specifies:
 - the UART transport;
 - controller-to-firmware command frames;
 - firmware-to-controller position, version, and encoder-counter reports;
-- raw coordinate semantics;
+- raw coordinate and diagnostic PWM semantics;
 - command acknowledgement, retry, and completion behavior;
 - timeout and error expectations.
 
@@ -95,9 +95,15 @@ ASCII. Zero is `0`; nonzero values have no leading zeroes. Signs, separators,
 whitespace, decimal points, and exponential notation are forbidden. The
 inclusive range is `0` through `4294967295`.
 
+Diagnostic PWM power is a signed integer from `-255` through `255`. Zero is
+`0`; positive values have no sign, negative values use one leading `-`, and
+nonzero magnitudes have no leading zeroes. A leading `+`, `-0`, whitespace,
+decimal points, and exponential notation are forbidden.
+
 ## Controller-to-firmware frames
 
-SET, MOV, MOV_CNT, SET_CNT, VERSION, and CNT are semicolon-terminated frames.
+SET, MOV, MOV_CNT, SET_CNT, PWM_AZ, PWM_EL, VERSION, and CNT are
+semicolon-terminated frames.
 They contain no spaces or newline:
 
 ```text
@@ -105,6 +111,8 @@ CMD:SET:<yaw>,<pitch>;
 CMD:MOV:<yaw>,<pitch>;
 CMD:MOV_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;
 CMD:SET_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;
+CMD:PWM_AZ:<power>;
+CMD:PWM_EL:<power>;
 CMD:VERSION;
 CMD:CNT;
 ```
@@ -120,6 +128,8 @@ CMD:SET:20.000,10.000;
 CMD:MOV:15.000,-40.000;
 CMD:MOV_CNT:PAN=45600,TILT=20400;
 CMD:SET_CNT:PAN=12345,TILT=5555;
+CMD:PWM_AZ:-150;
+CMD:PWM_EL:100;
 CMD:VERSION;
 CMD:CNT;
 ```
@@ -212,6 +222,31 @@ specified below. The response MUST contain the values read back from the timer
 registers after the write, which may differ from the request if a hardware
 counter is narrower than 32 bits.
 
+### Diagnostic PWM
+
+`CMD:PWM_AZ:<power>;` and `CMD:PWM_EL:<power>;` directly set signed PWM power
+for controlled bench diagnostics. Firmware MUST accept only the canonical
+integer encoding and inclusive range `[-255, 255]` specified above.
+
+Before applying either command, firmware MUST cancel any active MOV or MOV_CNT
+and disable both axes. A nonzero PWM_AZ command then enables only azimuth; a
+nonzero PWM_EL command enables only elevation. The absolute value selects the
+TIM3 PWM compare value and the sign selects direction. Power `0` leaves both
+axes disabled.
+
+The selected output persists without a movement target or firmware-side
+timeout until another PWM command, immediate stop, disconnect stop, or another
+accepted motor-owning command replaces it. VERSION and CNT MUST NOT alter it.
+Malformed or rejected input MUST disable the diagnostic output under the
+normal fail-safe rejection rule.
+
+The controller's PWM methods MUST immediately invalidate active and queued
+tracked work before serializing the new PWM frame. They preserve the trusted
+coordinate frame because encoder position reports continue. While nonzero PWM
+is active, controller state is MOVING with `manual_pwm` activity and no target.
+Communication loss, a NAK, or exhausted acknowledgement attempts MUST send the
+immediate stop byte and clear manual-PWM state.
+
 ### VERSION
 
 `CMD:VERSION;` requests the running firmware version. It MUST NOT change the
@@ -296,8 +331,9 @@ MSG:ACK:<command>;\r\n
 MSG:NAK:<command>,<reason>;\r\n
 ```
 
-`<command>` is one of `SET`, `MOV`, `MOV_CNT`, `SET_CNT`, `VERSION`, `CNT`,
-`EMERGENCY_STOP`, or `UNKNOWN`. `UNKNOWN` is valid only in a NAK. `<reason>` is
+`<command>` is one of `SET`, `MOV`, `MOV_CNT`, `SET_CNT`, `PWM_AZ`, `PWM_EL`,
+`VERSION`, `CNT`, `EMERGENCY_STOP`, or `UNKNOWN`. `UNKNOWN` is valid only in a
+NAK. `<reason>` is
 one of:
 
 - `UNABLE_TO_PARSE`: the command was malformed, incomplete, oversized, or
@@ -320,8 +356,9 @@ command.
 
 After the configured attempts receive no acknowledgement, the controller MUST
 fail the command, clear queued work, and enter `ERROR`. If MOV or MOV_CNT may
-have been accepted, it MUST also send immediate stop. If SET or SET_CNT may
-have been accepted, it MUST discard its trusted coordinate state.
+have been accepted, or PWM_AZ or PWM_EL may have applied power, it MUST also
+send immediate stop. If SET or SET_CNT may have been accepted, it MUST discard
+its trusted coordinate state.
 
 Firmware MUST parse every semicolon-terminated frame independently and tolerate
 retries. Repeating an identical valid frame MUST be idempotent: it must not

@@ -36,6 +36,7 @@ EMERGENCY_STOP_REPEAT_COUNT = 5
 COUNTS_PER_DEGREE = 240.0
 PAN_ZERO_COUNTER = 43_200
 TILT_ZERO_COUNTER = 21_600
+PWM_POWER_BOUNDS = (-255, 255)
 
 
 class TurntableError(Exception):
@@ -61,6 +62,7 @@ class TurntableActivity(str, enum.Enum):
     QUEUED = "queued"
     SETTING_POSITION = "setting_position"
     MOVING = "moving"
+    MANUAL_PWM = "manual_pwm"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -157,7 +159,14 @@ class _CounterMoveCommand:
     timeout: float
 
 
-_Command = _SetCommand | _MoveCommand | _RawCommand | _VersionCommand | _CounterRequestCommand | _CounterSetCommand | _CounterMoveCommand
+@dataclasses.dataclass(frozen=True)
+class _PwmCommand:
+    generation: int
+    axis: Literal["AZ", "EL"]
+    power: int
+
+
+_Command = _SetCommand | _MoveCommand | _RawCommand | _VersionCommand | _CounterRequestCommand | _CounterSetCommand | _CounterMoveCommand | _PwmCommand
 
 
 @dataclasses.dataclass
@@ -248,6 +257,7 @@ class ControllerThread(threading.Thread):
         self._position_history_generation = 0
         self._most_recent_by_kind: dict[str, ReceivedMessage] = {}
         self._last_error: Exception | None = None
+        self._manual_pwm: tuple[Literal["AZ", "EL"], int] | None = None
 
     def submit_set(self, *, pan: float, tilt: float, timeout: float) -> None:
         _validate_set_position(pan=pan, tilt=tilt)
@@ -273,6 +283,8 @@ class ControllerThread(threading.Thread):
 
         with self._lock:
             self._ensure_open()
+            if self._manual_pwm is not None:
+                raise TurntableError("The current position cannot be confirmed while manual PWM is active")
             if self._operation is not None or self._has_pending_commands():
                 raise TurntableError("The current position cannot be confirmed while commands are active or queued")
             if self._state == TurntableState.NO_COMMUNICATION:
@@ -323,6 +335,8 @@ class ControllerThread(threading.Thread):
 
         with self._lock:
             self._ensure_open()
+            if self._manual_pwm is not None:
+                raise TurntableError("Manual PWM must be stopped before sending untracked raw bytes")
             self._command_queue.put(
                 _RawCommand(
                     generation=self._command_generation,
@@ -376,6 +390,31 @@ class ControllerThread(threading.Thread):
                 )
             )
 
+    def submit_pwm(self, *, axis: Literal["AZ", "EL"], power: int) -> None:
+        """Cancel tracked work and queue one persistent manual PWM command."""
+
+        if axis not in {"AZ", "EL"}:
+            raise ValueError("PWM axis must be 'AZ' or 'EL'")
+        _validate_pwm_power(power)
+        with self._lock:
+            self._ensure_open()
+            self._operation = None
+            self._invalidate_pending_commands()
+            self._set_requested = False
+            self._manual_pwm = None if power == 0 else (axis, power)
+            if self._state != TurntableState.NO_COMMUNICATION:
+                if self._manual_pwm is not None:
+                    self._state = TurntableState.MOVING
+                else:
+                    self._state = TurntableState.STOPPED if self._has_been_set else TurntableState.NOT_SET
+            self._command_queue.put(
+                _PwmCommand(
+                    generation=self._command_generation,
+                    axis=axis,
+                    power=power,
+                )
+            )
+
     def submit_abort(self, *, repeat_count: int = EMERGENCY_STOP_REPEAT_COUNT) -> None:
         """Immediately invalidate queued work and send repeated stop bytes."""
 
@@ -385,6 +424,7 @@ class ControllerThread(threading.Thread):
             self._operation = None
             self._invalidate_pending_commands()
             self._set_requested = False
+            self._manual_pwm = None
             if self._state != TurntableState.NO_COMMUNICATION:
                 self._state = TurntableState.STOPPED if self._has_been_set else TurntableState.NOT_SET
             self._write_stop(repeat_count=repeat_count)
@@ -428,6 +468,10 @@ class ControllerThread(threading.Thread):
                 timeout_at = operation.timeout_at
                 target_position = PanTilt(operation.pan, operation.tilt)
                 internal_target = operation.internal_target
+            elif self._manual_pwm is not None:
+                activity = TurntableActivity.MANUAL_PWM
+                axis, power = self._manual_pwm
+                activity_phase = f"{axis.lower()}={power}"
             elif self._queued_commands or not self._command_queue.empty():
                 activity = TurntableActivity.QUEUED
             else:
@@ -585,7 +629,10 @@ class ControllerThread(threading.Thread):
                     self._operation = None
                     self._state = TurntableState.MOVING if self._has_pending_commands() else TurntableState.STOPPED
             elif not isinstance(self._operation, _MoveOperation):
-                self._state = TurntableState.STOPPED if self._has_been_set else TurntableState.NOT_SET
+                if self._manual_pwm is not None:
+                    self._state = TurntableState.MOVING
+                else:
+                    self._state = TurntableState.STOPPED if self._has_been_set else TurntableState.NOT_SET
             else:
                 operation = self._operation
                 if _position_matches(
@@ -633,11 +680,12 @@ class ControllerThread(threading.Thread):
             reference = self._most_recent_communication if math.isfinite(self._most_recent_communication) else self._started_at
             if now - reference > self._communication_timeout:
                 if self._state != TurntableState.NO_COMMUNICATION:
-                    if isinstance(operation, _MoveOperation):
+                    if isinstance(operation, _MoveOperation) or self._manual_pwm is not None:
                         self._write_stop()
                     self._state = TurntableState.NO_COMMUNICATION
                     self._has_been_set = False
                     self._set_requested = False
+                    self._manual_pwm = None
                     self._operation = None
                     self._invalidate_pending_commands()
                 return
@@ -685,8 +733,10 @@ class ControllerThread(threading.Thread):
                 self._send_counter_request(command)
             elif isinstance(command, _CounterSetCommand):
                 self._send_counter_set(command)
-            else:
+            elif isinstance(command, _CounterMoveCommand):
                 self._begin_counter_move(command)
+            else:
+                self._send_pwm(command)
 
     def _send_version_request(self, command: _VersionCommand) -> None:
         if command.generation == self._command_generation:
@@ -707,6 +757,7 @@ class ControllerThread(threading.Thread):
             self._position_history_generation += 1
             self._has_been_set = False
             self._set_requested = False
+            self._manual_pwm = None
             self._corrected_position = None
             if self._state != TurntableState.NO_COMMUNICATION:
                 self._state = TurntableState.NOT_SET
@@ -714,6 +765,16 @@ class ControllerThread(threading.Thread):
                 f"CMD:SET_CNT:PAN={command.pan},TILT={command.tilt};".encode("ascii"),
                 command="SET_CNT",
                 invalidates_position_on_uncertainty=True,
+            )
+
+    def _send_pwm(self, command: _PwmCommand) -> None:
+        with self._lock:
+            if command.generation != self._command_generation:
+                return
+            self._write_acknowledged_command(
+                f"CMD:PWM_{command.axis}:{command.power};".encode("ascii"),
+                command=f"PWM_{command.axis}",
+                stop_on_failure=True,
             )
 
     def _send_raw(self, command: _RawCommand) -> None:
@@ -727,6 +788,7 @@ class ControllerThread(threading.Thread):
             self._position_history_generation += 1
             self._has_been_set = False
             self._set_requested = False
+            self._manual_pwm = None
             self._corrected_position = None
             if self._state != TurntableState.NO_COMMUNICATION:
                 self._state = TurntableState.NOT_SET
@@ -737,6 +799,7 @@ class ControllerThread(threading.Thread):
             if command.generation != self._command_generation:
                 return
             self._position_history.clear()
+            self._manual_pwm = None
             deadline, timeout_at = _make_deadline(command.timeout)
             self._operation = _SetOperation(
                 pan=command.pan,
@@ -755,6 +818,7 @@ class ControllerThread(threading.Thread):
         with self._lock:
             if command.generation != self._command_generation:
                 return
+            self._manual_pwm = None
             if not self._has_been_set:
                 self._last_error = TurntableError("The turntable position is not set")
                 self._state = TurntableState.ERROR
@@ -792,6 +856,7 @@ class ControllerThread(threading.Thread):
         with self._lock:
             if command.generation != self._command_generation:
                 return
+            self._manual_pwm = None
             target = _counter_target_to_yaw_pitch(pan=command.pan, tilt=command.tilt)
             deadline, timeout_at = _make_deadline(command.timeout)
             self._operation = _MoveOperation(
@@ -839,6 +904,7 @@ class ControllerThread(threading.Thread):
     ) -> None:
         if pending.stop_on_failure:
             self._write_stop()
+            self._manual_pwm = None
         if uncertain and pending.invalidates_position_on_uncertainty:
             self._has_been_set = False
             self._corrected_position = None
@@ -866,6 +932,7 @@ class ControllerThread(threading.Thread):
                 self._last_error = exc
                 self._operation = None
                 self._pending_acknowledgement = None
+                self._manual_pwm = None
                 self._invalidate_pending_commands()
                 self._set_requested = False
                 self._state = TurntableState.ERROR
@@ -909,6 +976,11 @@ def _validate_repeat_count(repeat_count: int) -> None:
 def _validate_counter(name: str, value: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= UINT32_MAX:
         raise ValueError(f"{name} counter must be an integer within [0, {UINT32_MAX}]")
+
+
+def _validate_pwm_power(power: int) -> None:
+    if isinstance(power, bool) or not isinstance(power, int) or not PWM_POWER_BOUNDS[0] <= power <= PWM_POWER_BOUNDS[1]:
+        raise ValueError(f"PWM power must be an integer within [{PWM_POWER_BOUNDS[0]}, {PWM_POWER_BOUNDS[1]}]")
 
 
 def _validate_position(*, pan: float, tilt: float) -> None:

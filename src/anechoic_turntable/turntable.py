@@ -199,6 +199,16 @@ class Turntable:
 
         self._controller.submit_counter_move(pan=pan, tilt=tilt, timeout=move_timeout)
 
+    def set_azimuth_pwm(self, power: int) -> None:
+        """Cancel tracked work and set persistent signed azimuth PWM power."""
+
+        self._controller.submit_pwm(axis="AZ", power=power)
+
+    def set_elevation_pwm(self, power: int) -> None:
+        """Cancel tracked work and set persistent signed elevation PWM power."""
+
+        self._controller.submit_pwm(axis="EL", power=power)
+
     def abort(self, *, repeat_count: int = EMERGENCY_STOP_REPEAT_COUNT) -> None:
         """Immediately stop movement with repeated bytes and invalidate queued commands."""
 

@@ -14,6 +14,7 @@ from anechoic_turntable._version import PROTOCOL_VERSION
 from anechoic_turntable._version import REFERENCE_FIRMWARE_VERSION
 from anechoic_turntable._version import __version__
 from anechoic_turntable.controller import ALLOWABLE_DISCREPANCY_DEG
+from anechoic_turntable.controller import PWM_POWER_BOUNDS
 from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.controller import ControllerThread
 from anechoic_turntable.controller import PositionSample
@@ -37,6 +38,7 @@ __all__ = [
     "ALLOWABLE_DISCREPANCY_DEG",
     "CONTROLLER_VERSION",
     "PROTOCOL_VERSION",
+    "PWM_POWER_BOUNDS",
     "REFERENCE_FIRMWARE_VERSION",
     "CommandWrite",
     "ControllerThread",

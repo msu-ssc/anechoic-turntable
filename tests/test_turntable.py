@@ -75,7 +75,7 @@ class FakeSerial:
     def _command_name(data):
         if data == b"p":
             return "EMERGENCY_STOP"
-        for command in ("MOV_CNT", "SET_CNT", "VERSION", "SET", "MOV", "CNT"):
+        for command in ("MOV_CNT", "SET_CNT", "PWM_AZ", "PWM_EL", "VERSION", "SET", "MOV", "CNT"):
             if data.startswith(f"CMD:{command}".encode()):
                 return command
         return None
@@ -176,6 +176,8 @@ def test_counter_response_becomes_a_typed_event():
     ("message", "status", "command", "reason"),
     [
         (b"MSG:ACK:MOV_CNT;\r\n", "ACK", "MOV_CNT", None),
+        (b"MSG:ACK:PWM_AZ;\r\n", "ACK", "PWM_AZ", None),
+        (b"MSG:NAK:PWM_EL,REJECTED;\r\n", "NAK", "PWM_EL", "REJECTED"),
         (b"MSG:ACK:EMERGENCY_STOP;\r\n", "ACK", "EMERGENCY_STOP", None),
         (b"MSG:NAK:MOV_CNT,UNABLE_TO_PARSE;\r\n", "NAK", "MOV_CNT", "UNABLE_TO_PARSE"),
         (b"MSG:NAK:UNKNOWN,REJECTED;\r\n", "NAK", "UNKNOWN", "REJECTED"),
@@ -767,6 +769,87 @@ def test_counter_set_waits_behind_an_active_move():
 
         fake.emit_internal_position(yaw=10, pitch=0)
         wait_for(lambda: b"CMD:SET_CNT:PAN=12345,TILT=5555;" in fake.writes)
+    finally:
+        turntable.close()
+
+
+def test_pwm_commands_cancel_tracked_work_and_preserve_position():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        turntable.move_to(pan=10, tilt=0)
+        turntable.move_to(pan=20, tilt=0)
+        wait_for(lambda: b"CMD:MOV:10.000,0.000;" in fake.writes)
+        writes_before_pwm = len(fake.writes)
+
+        turntable.set_azimuth_pwm(-150)
+
+        wait_for(lambda: b"CMD:PWM_AZ:-150;" in fake.writes)
+        assert fake.writes[writes_before_pwm:] == [b"CMD:PWM_AZ:-150;"]
+        assert b"CMD:MOV:20.000,0.000;" not in fake.writes
+        snapshot = turntable.get_complete_state()
+        assert snapshot.state == turntable2.TurntableState.MOVING
+        assert snapshot.activity == turntable2.TurntableActivity.MANUAL_PWM
+        assert snapshot.activity_phase == "az=-150"
+        assert snapshot.corrected_position == turntable2.PanTilt(0, 0)
+        assert snapshot.has_been_set
+
+        turntable.set_elevation_pwm(100)
+        wait_for(lambda: b"CMD:PWM_EL:100;" in fake.writes)
+        assert turntable.get_complete_state().activity_phase == "el=100"
+
+        turntable.set_elevation_pwm(0)
+        wait_for(lambda: b"CMD:PWM_EL:0;" in fake.writes)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        assert turntable.get_complete_state().activity == turntable2.TurntableActivity.IDLE
+    finally:
+        turntable.close()
+
+
+@pytest.mark.parametrize("power", [-256, 256, 1.5, True])
+def test_pwm_commands_reject_invalid_power(power):
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        with pytest.raises(ValueError, match="PWM power"):
+            turntable.set_azimuth_pwm(power)
+        assert fake.writes == []
+    finally:
+        turntable.close()
+
+
+def test_unacknowledged_pwm_is_retried_then_stopped():
+    fake = FakeSerial(acknowledge_commands=False)
+    turntable = make_turntable(fake, command_repetitions=2)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+
+        turntable.set_azimuth_pwm(150)
+
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.ERROR)
+        assert fake.writes.count(b"CMD:PWM_AZ:150;") == 2
+        assert fake.writes.count(b"p") == 5
+        assert turntable.get_complete_state().activity != turntable2.TurntableActivity.MANUAL_PWM
+        assert "No acknowledgement received for PWM_AZ" in str(turntable.last_error())
+    finally:
+        turntable.close()
+
+
+def test_manual_pwm_communication_loss_sends_immediate_stop():
+    fake = FakeSerial()
+    turntable = make_turntable(fake, communication_timeout=0.05)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_azimuth_pwm(150)
+        wait_for(lambda: b"CMD:PWM_AZ:150;" in fake.writes)
+
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.NO_COMMUNICATION)
+
+        assert fake.writes.count(b"p") == 5
+        assert turntable.get_complete_state().activity != turntable2.TurntableActivity.MANUAL_PWM
     finally:
         turntable.close()
 

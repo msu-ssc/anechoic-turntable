@@ -43,9 +43,10 @@ from anechoic_turntable.session import NotConnectedError
 from anechoic_turntable.session import TurntableSession
 from anechoic_turntable.session import parse_coordinates
 from anechoic_turntable.session import parse_counter_values
+from anechoic_turntable.session import parse_pwm_power
 from anechoic_turntable.turntable import Turntable
 
-_COMMAND_HELP = "Commands: connect | info | confirm | set pan=<number> tilt=<number> | mov pan=<number> tilt=<number> | set_cnt pan=<integer> tilt=<integer> | mov_cnt pan=<integer> tilt=<integer> | counter? | raw <ASCII bytes> | stop | help | exit"
+_COMMAND_HELP = "Commands: connect | info | confirm | set pan=<number> tilt=<number> | mov pan=<number> tilt=<number> | set_cnt pan=<integer> tilt=<integer> | mov_cnt pan=<integer> tilt=<integer> | counter? | pwm_az <integer> | pwm_el <integer> | raw <ASCII bytes> | stop | help | exit"
 _MESSAGE_KINDS = ("position", "version", "counter", "acknowledgement", "other")
 
 
@@ -437,6 +438,8 @@ class TurntableTui(App[None]):
             if self._reject_arguments(command, arguments):
                 return
             self._request_counters()
+        elif command in {"pwm_az", "pwm_el"}:
+            self._set_pwm(command.removeprefix("pwm_"), arguments)
         elif command == "raw":
             self._send_raw(arguments)
         elif command == "stop":
@@ -613,6 +616,16 @@ class TurntableTui(App[None]):
             self._write_message(f"error: {exc}")
             return
         self._write_message("counter query queued")
+        self.refresh_controller_state()
+
+    def _set_pwm(self, axis: Literal["az", "el"], arguments: str) -> None:
+        try:
+            power = parse_pwm_power(arguments)
+            self._session.set_pwm(axis, power)
+        except (CommandSyntaxError, NotConnectedError, TurntableError, ValueError) as exc:
+            self._write_message(f"error: {exc}")
+            return
+        self._write_message(f"PWM {axis} queued: {power}")
         self.refresh_controller_state()
 
     def _stop_turntable(self) -> None:

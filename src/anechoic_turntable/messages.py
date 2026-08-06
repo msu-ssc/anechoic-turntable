@@ -13,13 +13,13 @@ from pydantic import Field
 _POSITION_PATTERN = re.compile(rb"MSG:POS:PAN=(?P<yaw>-?\d{1,3}\.\d{3}),TILT=(?P<pitch>-?\d{1,3}\.\d{3})\r\n\Z")
 _VERSION_PATTERN = re.compile(rb"MSG:VERSION:(?P<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*));\r\n\Z")
 _COUNTER_PATTERN = re.compile(rb"MSG:CNT:PAN=(?P<pan>0|[1-9]\d*),TILT=(?P<tilt>0|[1-9]\d*);\r\n\Z")
-_ACK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|VERSION|CNT|EMERGENCY_STOP)"
-_NAK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|VERSION|CNT|EMERGENCY_STOP|UNKNOWN)"
+_ACK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|PWM_AZ|PWM_EL|VERSION|CNT|EMERGENCY_STOP)"
+_NAK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|PWM_AZ|PWM_EL|VERSION|CNT|EMERGENCY_STOP|UNKNOWN)"
 _ACKNOWLEDGEMENT_PATTERN = re.compile(rb"MSG:(?P<status>ACK):(?P<command>" + _ACK_COMMAND_NAME + rb");\r\n\Z")
 _NEGATIVE_ACKNOWLEDGEMENT_PATTERN = re.compile(rb"MSG:(?P<status>NAK):(?P<command>" + _NAK_COMMAND_NAME + rb"),(?P<reason>UNABLE_TO_PARSE|REJECTED);\r\n\Z")
 _UINT32_MAX = 2**32 - 1
 
-CommandName = Literal["SET", "MOV", "MOV_CNT", "SET_CNT", "VERSION", "CNT", "EMERGENCY_STOP", "UNKNOWN"]
+CommandName = Literal["SET", "MOV", "MOV_CNT", "SET_CNT", "PWM_AZ", "PWM_EL", "VERSION", "CNT", "EMERGENCY_STOP", "UNKNOWN"]
 
 
 def _utc_now() -> datetime.datetime:

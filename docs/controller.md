@@ -67,6 +67,18 @@ completion. Counter targets bypass the physical bounds enforced by `move_to`,
 so diagnostic operators must ensure targets are reachable and mechanically
 safe.
 
+`set_azimuth_pwm(power)` and `set_elevation_pwm(power)` are persistent bench
+diagnostics accepting integer power from `-255` through `255`. Each call
+cancels the active operation and queued work before sending `CMD:PWM_AZ` or
+`CMD:PWM_EL`; firmware disables both axes before enabling only the selected
+one. Zero disables both axes. Nonzero output remains active until replaced or
+stopped, so use these methods only with the mechanism clear and an immediate
+stop available. Trusted encoder position is retained, and complete state shows
+`manual_pwm` activity with the selected axis and power. Communication loss,
+NAK, or acknowledgement exhaustion attempts an immediate stop.
+Untracked `send_raw` writes are rejected while manual PWM is active; stop the
+manual output first so the controller cannot lose responsibility for it.
+
 `set_position` and `move_to` queue work and return immediately. Commands are
 processed in order. `move_to` sends physical pan and tilt directly as firmware
 yaw and pitch. By default, its timeout is calculated when the queued move

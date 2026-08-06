@@ -81,6 +81,7 @@ int move_az =0;
 int move_el = 0;
 
 int mode =0;  // 0 is auto, 1 is manual
+volatile bool manual_pwm_active = false;
 
 char rxBuffer[64];
 // Completed commands are C strings, so they need one extra byte for the null terminator.
@@ -148,6 +149,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	  }
 	  move = 0;
 	  mode = 0;
+	  manual_pwm_active = false;
 	  buff =0;
 	  MYPROG_disable_az();
 	  MYPROG_disable_el();
@@ -332,6 +334,43 @@ bool parse_set_command(const char *input, float *yaw, float *pitch) {
     return parse_command_coordinates(input, "CMD:SET:", yaw, pitch);
 }
 
+bool parse_pwm_command(const char *input, const char *expected_prefix, int *power)
+{
+    size_t prefix_length = strlen(expected_prefix);
+    if (strncmp(input, expected_prefix, prefix_length) != 0) {
+        return false;
+    }
+
+    const char *power_text = input + prefix_length;
+    int index = 0;
+    bool negative = false;
+    if (power_text[index] == '-') {
+        negative = true;
+        index++;
+    }
+    if (!is_ascii_digit(power_text[index])) {
+        return false;
+    }
+    if (power_text[index] == '0' && is_ascii_digit(power_text[index + 1])) {
+        return false;
+    }
+
+    int64_t magnitude = 0;
+    while (is_ascii_digit(power_text[index])) {
+        magnitude = magnitude * 10 + (power_text[index] - '0');
+        if (magnitude > INT32_MAX) {
+            return false;
+        }
+        index++;
+    }
+    if (power_text[index] != '\0' || (negative && magnitude == 0)) {
+        return false;
+    }
+
+    *power = negative ? -(int)magnitude : (int)magnitude;
+    return true;
+}
+
 bool parse_counter_command(
     const char *input,
     const char *expected_prefix,
@@ -398,6 +437,8 @@ typedef enum
     COMMAND_MOV,
     COMMAND_MOV_CNT,
     COMMAND_SET_CNT,
+    COMMAND_PWM_AZ,
+    COMMAND_PWM_EL,
     COMMAND_VERSION,
     COMMAND_CNT
 } command_type_t;
@@ -421,6 +462,12 @@ command_type_t identify_command_type(const char *input)
     }
     if (command_token_matches(input, "SET_CNT")) {
         return COMMAND_SET_CNT;
+    }
+    if (command_token_matches(input, "PWM_AZ")) {
+        return COMMAND_PWM_AZ;
+    }
+    if (command_token_matches(input, "PWM_EL")) {
+        return COMMAND_PWM_EL;
     }
     if (command_token_matches(input, "VERSION")) {
         return COMMAND_VERSION;
@@ -448,6 +495,10 @@ const char *command_type_name(command_type_t command_type)
         return "MOV_CNT";
     case COMMAND_SET_CNT:
         return "SET_CNT";
+    case COMMAND_PWM_AZ:
+        return "PWM_AZ";
+    case COMMAND_PWM_EL:
+        return "PWM_EL";
     case COMMAND_VERSION:
         return "VERSION";
     case COMMAND_CNT:
@@ -608,6 +659,14 @@ void MYPROG_main_loop()
 	{
 		MYPROG_SendAcknowledgement("EMERGENCY_STOP", true, NULL);
 	}
+	if (oversized_command_available || rejected_frame_available || unable_to_parse_frame_available)
+	{
+		move = 0;
+		mode = 0;
+		manual_pwm_active = false;
+		MYPROG_disable_az();
+		MYPROG_disable_el();
+	}
 	if (rejected_frame_available)
 	{
 		MYPROG_SendAcknowledgement("UNKNOWN", false, "REJECTED");
@@ -623,6 +682,7 @@ void MYPROG_main_loop()
 		// Keep parsed movement coordinates local until the complete command can be applied safely.
 		float move_yaw = 0.0f;
 		float move_pitch = 0.0f;
+		int pwm_power = 0;
     uint32_t azimuth_counter = 0;
     uint32_t elevation_counter = 0;
 		command_type_t command_type = identify_command_type(command_to_process);
@@ -654,6 +714,14 @@ void MYPROG_main_loop()
 			command_parsed = parse_counter_command(command_to_process, "CMD:SET_CNT:PAN=",
 				&azimuth_counter, &elevation_counter);
 			break;
+		case COMMAND_PWM_AZ:
+			command_parsed = parse_pwm_command(command_to_process, "CMD:PWM_AZ:", &pwm_power);
+			command_rejected = command_parsed && (pwm_power < -255 || pwm_power > 255);
+			break;
+		case COMMAND_PWM_EL:
+			command_parsed = parse_pwm_command(command_to_process, "CMD:PWM_EL:", &pwm_power);
+			command_rejected = command_parsed && (pwm_power < -255 || pwm_power > 255);
+			break;
 		default:
 			break;
 		}
@@ -672,6 +740,7 @@ void MYPROG_main_loop()
 		{
 			move = 0;
 			mode = 0;
+			manual_pwm_active = false;
 			MYPROG_disable_az();
 			MYPROG_disable_el();
 		}
@@ -687,6 +756,7 @@ void MYPROG_main_loop()
 			case COMMAND_SET_CNT:
 				move = 0;
 				mode = 0;
+				manual_pwm_active = false;
 				MYPROG_disable_az();
 				MYPROG_disable_el();
 				TIM2->CNT = azimuth_counter;
@@ -700,6 +770,9 @@ void MYPROG_main_loop()
 				move_pitch = ((float)elevation_counter - 21600.0f) / 240.0f;
 				/* fall through */
 			case COMMAND_MOV:
+				manual_pwm_active = false;
+				MYPROG_disable_az();
+				MYPROG_disable_el();
 				Azc = move_yaw;
 				Elc = move_pitch;
 				move = 1;
@@ -713,10 +786,29 @@ void MYPROG_main_loop()
 			{
 				move = 0;
 				mode = 0;
+				manual_pwm_active = false;
+				MYPROG_disable_az();
+				MYPROG_disable_el();
 				TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f));
 				TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f));
 				break;
 			}
+			case COMMAND_PWM_AZ:
+			case COMMAND_PWM_EL:
+				move = 0;
+				mode = 0;
+				manual_pwm_active = false;
+				MYPROG_disable_az();
+				MYPROG_disable_el();
+				if (pwm_power != 0)
+				{
+					int axis = command_type == COMMAND_PWM_AZ ? 1 : 2;
+					int direction = pwm_power > 0 ? 1 : 0;
+					int magnitude = pwm_power > 0 ? pwm_power : -pwm_power;
+					MYPROG_move_axis(axis, magnitude, direction);
+					manual_pwm_active = true;
+				}
+				break;
 			default:
 				break;
 			}
@@ -762,7 +854,10 @@ void MYPROG_main_loop()
 
 	int target_reached = move_az && move_el;
 
-	if(move && !target_reached && mode ==0)
+	if(manual_pwm_active)
+			{
+				// PWM diagnostics retain the explicitly requested output until stopped or replaced.
+			}else if(move && !target_reached && mode ==0)
 			{
 			MYPROG_motor_control_loop();
 			}else if ( mode == 1)

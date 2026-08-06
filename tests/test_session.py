@@ -10,6 +10,8 @@ class FakeTurntable:
         self.aborted = False
         self.closed = False
         self.raw_writes = []
+        self.azimuth_pwm = []
+        self.elevation_pwm = []
 
     def abort(self):
         self.aborted = True
@@ -19,6 +21,12 @@ class FakeTurntable:
 
     def send_raw(self, payload):
         self.raw_writes.append(payload)
+
+    def set_azimuth_pwm(self, power):
+        self.azimuth_pwm.append(power)
+
+    def set_elevation_pwm(self, power):
+        self.elevation_pwm.append(power)
 
 
 def test_connection_finishing_after_close_is_stopped_and_discarded():
@@ -54,9 +62,13 @@ def test_session_sends_exact_ascii_and_stops_connected_turntable():
     assert session.connect().connected
 
     session.send_raw("CMD:MOV:0.000,-70.00;")
+    session.set_pwm("az", -150)
+    session.set_pwm("el", 100)
     session.stop()
 
     assert table.raw_writes == [b"CMD:MOV:0.000,-70.00;"]
+    assert table.azimuth_pwm == [-150]
+    assert table.elevation_pwm == [100]
     assert table.aborted
 
 

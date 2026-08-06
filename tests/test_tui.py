@@ -31,6 +31,8 @@ class FakeTurntable:
         self.counter_requests = 0
         self.counter_sets = []
         self.counter_moves = []
+        self.azimuth_pwm = []
+        self.elevation_pwm = []
         self.closed = False
         self.estimated_travel_time = 10.0
         self.receive_events = (
@@ -92,6 +94,12 @@ class FakeTurntable:
 
     def move_to_counters(self, *, pan, tilt, move_timeout=300.0):
         self.counter_moves.append((pan, tilt, move_timeout))
+
+    def set_azimuth_pwm(self, power):
+        self.azimuth_pwm.append(power)
+
+    def set_elevation_pwm(self, power):
+        self.elevation_pwm.append(power)
 
     def events(self):
         return self.receive_events
@@ -179,6 +187,24 @@ def test_tui_queues_counter_set_move_and_query_commands():
             assert "counter: pan=12345 tilt=5555" in rendered_text(app.query_one("#serial-parsed", Static))
             assert "ack: CNT" in rendered_text(app.query_one("#serial-parsed", Static))
             assert "acknowledgement: ACK CNT" in rendered_text(app.query_one("#controller", Static))
+
+    asyncio.run(exercise())
+
+
+def test_tui_queues_signed_pwm_commands_and_rejects_invalid_power():
+    async def exercise():
+        table = FakeTurntable()
+        app = TurntableTui(connector=lambda: table, refresh_interval=60)
+
+        async with app.run_test():
+            submit(app, "connect")
+            submit(app, "pwm_az -150")
+            submit(app, "pwm_el +100")
+            for command in ("pwm_az", "pwm_el 1.5", "pwm_az 256", "pwm_el 1 2"):
+                submit(app, command)
+
+            assert table.azimuth_pwm == [-150]
+            assert table.elevation_pwm == [100]
 
     asyncio.run(exercise())
 

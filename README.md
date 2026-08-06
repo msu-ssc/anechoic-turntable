@@ -39,7 +39,10 @@ streams and controller summary.
 The command field also accepts `connect`, `info`, `confirm`,
 `set pan=<number> tilt=<number>`, `mov pan=<number> tilt=<number>`,
 `set_cnt pan=<integer> tilt=<integer>`, `mov_cnt pan=<integer> tilt=<integer>`,
-`counter?`, `raw`, `stop`, `help`, and `exit`. The counter commands directly
+`counter?`, `pwm_az <integer>`, `pwm_el <integer>`, `raw`, `stop`, `help`, and
+`exit`. The PWM commands accept signed power from -255 through 255 and persist
+until replaced or stopped; they are for controlled bench diagnostics only. The
+counter commands directly
 set, move to, or query firmware encoder counters for diagnostics; setting
 counters clears the controller's trusted position. `stop` and the red
 emergency-stop button immediately cancel queued work and send the firmware stop
