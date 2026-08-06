@@ -17,11 +17,17 @@ Do not use the direct-coordinate controller with the historical TIM1 period of
 do not yet provide an overshoot margin at exact counter endpoints.
 
 Firmware also accepts `CMD:CNT;` to query the raw encoder counters and
-`CMD:CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` to stop motion and set them
+`CMD:SET_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` to stop motion and set them
 directly. Both commands return
 `MSG:CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` followed by CRLF. These are
 diagnostic operations; setting counters changes the coordinate frame. See
 [`docs/protocol.md`](../docs/protocol.md) for exact framing and numeric rules.
+
+`CMD:MOV_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` converts the supplied
+counters to degrees using the configured zero counts and `240` counts per
+degree, then runs the existing degree-based movement logic. It is a diagnostic
+operation: targets must be reachable within the configured timer periods and
+safe for the physical mechanism.
 
 ## Command-line build
 

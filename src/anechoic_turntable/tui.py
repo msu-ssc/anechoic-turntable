@@ -44,7 +44,7 @@ from anechoic_turntable.session import parse_coordinates
 from anechoic_turntable.session import parse_counter_values
 from anechoic_turntable.turntable import Turntable
 
-_COMMAND_HELP = "Commands: connect | info | confirm | set az=<number> el=<number> | mov az=<number> el=<number> | counter pan=<integer> tilt=<integer> | counter? | raw <ASCII bytes> | stop | help | exit"
+_COMMAND_HELP = "Commands: connect | info | confirm | set az=<number> el=<number> | mov az=<number> el=<number> | set_cnt pan=<integer> tilt=<integer> | mov_cnt pan=<integer> tilt=<integer> | counter? | raw <ASCII bytes> | stop | help | exit"
 _MESSAGE_KINDS = ("position", "version", "counter", "other")
 
 
@@ -428,8 +428,10 @@ class TurntableTui(App[None]):
             self._confirm_position()
         elif command in {"set", "mov"}:
             self._queue_position(command, arguments)
-        elif command == "counter":
+        elif command == "set_cnt":
             self._set_counters(arguments)
+        elif command == "mov_cnt":
+            self._move_to_counters(arguments)
         elif command == "counter?":
             if self._reject_arguments(command, arguments):
                 return
@@ -585,6 +587,16 @@ class TurntableTui(App[None]):
             self._write_message(f"error: {exc}")
             return
         self._write_message(f"counter set queued: pan={counters.pan} tilt={counters.tilt}")
+        self.refresh_controller_state()
+
+    def _move_to_counters(self, arguments: str) -> None:
+        try:
+            counters = parse_counter_values(arguments)
+            self._session.move_to_counters(counters)
+        except (CommandSyntaxError, NotConnectedError, TurntableError, ValueError) as exc:
+            self._write_message(f"error: {exc}")
+            return
+        self._write_message(f"counter move queued: pan={counters.pan} tilt={counters.tilt}")
         self.refresh_controller_state()
 
     def _request_counters(self) -> None:

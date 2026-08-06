@@ -35,11 +35,12 @@ the parsed stream. The Commands panel shows both operator/controller output and
 the exact bytes written to the serial connection.
 
 The command field also accepts `connect`, `info`, `confirm`, `set`, `mov`,
-`counter pan=<integer> tilt=<integer>`, `counter?`, `raw`, `stop`, `help`, and
-`exit`. The counter commands directly set or query the firmware encoder
-counters for diagnostics; setting counters clears the controller's trusted
-position. `stop` and the red emergency-stop button
-immediately cancel queued work and send the firmware stop byte. `raw` sends its
+`set_cnt pan=<integer> tilt=<integer>`, `mov_cnt pan=<integer> tilt=<integer>`,
+`counter?`, `raw`, `stop`, `help`, and `exit`. The counter commands directly
+set, move to, or query firmware encoder counters for diagnostics; setting
+counters clears the controller's trusted position. `stop` and the red
+emergency-stop button immediately cancel queued work and send the firmware stop
+byte. `raw` sends its
 ASCII argument exactly once without protocol or coordinate validation; it is
 for controlled firmware diagnostics only, and normal movement remains disabled
 until the position is set or confirmed again. Serial-port discovery runs in the

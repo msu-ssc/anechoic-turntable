@@ -1,5 +1,5 @@
 # Turntable Firmware–Controller Protocol Contract
-PROTOCOL_VERSION=2.2.0
+PROTOCOL_VERSION=2.3.0
 
 This document is the authoritative contract between the STM32 turntable
 firmware and the Python controller. If an implementation differs from this
@@ -23,8 +23,9 @@ This contract specifies:
 - command repetition and completion behavior;
 - timeout and error expectations.
 
-The controller sends physical pan/tilt directly as the yaw/pitch coordinates in
-the historical wire fields named `Az` and `El`.
+For SET and MOV, the controller sends physical pan/tilt directly as the
+yaw/pitch coordinates in the historical wire fields named `Az` and `El`.
+MOV_CNT instead carries raw counter targets that firmware converts to degrees.
 
 ## Transport
 
@@ -96,15 +97,16 @@ inclusive range is `0` through `4294967295`.
 
 ## Controller-to-firmware frames
 
-SET, MOV, VERSION, and CNT are semicolon-terminated frames. They contain no
-spaces or newline:
+SET, MOV, MOV_CNT, SET_CNT, VERSION, and CNT are semicolon-terminated frames.
+They contain no spaces or newline:
 
 ```text
 CMD:SET:<yaw>,<pitch>;
 CMD:MOV:<yaw>,<pitch>;
+CMD:MOV_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;
+CMD:SET_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;
 CMD:VERSION;
 CMD:CNT;
-CMD:CNT:PAN=<pan-counter>,TILT=<tilt-counter>;
 ```
 
 The terminating semicolon is part of the frame and MUST NOT be included in
@@ -116,9 +118,10 @@ Canonical examples:
 CMD:SET:0.000,0.000;
 CMD:SET:20.000,10.000;
 CMD:MOV:15.000,-40.000;
+CMD:MOV_CNT:PAN=45600,TILT=20400;
+CMD:SET_CNT:PAN=12345,TILT=5555;
 CMD:VERSION;
 CMD:CNT;
-CMD:CNT:PAN=12345,TILT=5555;
 ```
 
 A canonical command is shorter than 64 bytes. Firmware MUST safely reject and
@@ -164,6 +167,44 @@ uses TIM1 period `43200` with elevation zero at count `21600`.
 The bounds are inclusive. They do not provide margin against encoder-counter
 rollover if physical motion overshoots an exact representable endpoint.
 
+### MOV_CNT
+
+`CMD:MOV_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` commands both axes using
+raw encoder-counter targets. Firmware MUST convert the counters to the same
+yaw and pitch degree targets used by MOV:
+
+```text
+yaw = (pan-counter - 43200) / 240
+pitch = (tilt-counter - 21600) / 240
+```
+
+After conversion, firmware MUST use the existing MOV movement logic and
+position-report completion behavior without a separate counter-based motor
+control mode. It MUST tolerate receiving the same MOV_CNT frame more than
+once.
+
+MOV_CNT is a diagnostic operation and does not establish a trusted physical
+coordinate frame. The controller accepts unsigned 32-bit counter fields,
+repeats the frame three times, tracks the converted degree target, and uses a
+300-second timeout by default. On timeout or communication loss it MUST send
+the immediate stop byte. The operator is responsible for choosing targets
+that the configured timer periods and physical mechanism can safely reach.
+
+### SET_CNT
+
+`CMD:SET_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` immediately stops both
+axes, cancels the active move, and writes the supplied raw encoder-counter
+values. The `PAN` field addresses the azimuth timer counter and `TILT`
+addresses the elevation timer counter. This diagnostic operation changes the
+firmware coordinate frame; after sending it, the controller MUST discard its
+trusted physical position and require SET or explicit position confirmation
+before a normal move.
+
+Firmware MUST respond once to each valid SET_CNT command with the CNT response
+specified below. The response MUST contain the values read back from the timer
+registers after the write, which may differ from the request if a hardware
+counter is narrower than 32 bits.
+
 ### VERSION
 
 `CMD:VERSION;` requests the running firmware version. It MUST NOT change the
@@ -177,18 +218,8 @@ specified below.
 NOT alter either counter, the coordinate reference, motion target, motor state,
 or reporting cadence.
 
-`CMD:CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` immediately stops both axes,
-cancels the active move, and writes the supplied raw encoder-counter values.
-The `PAN` field addresses the azimuth timer counter and `TILT` addresses the
-elevation timer counter. This diagnostic operation changes the firmware
-coordinate frame; after sending it, the controller MUST discard its trusted
-physical position and require SET or explicit position confirmation before a
-normal move.
-
-Firmware MUST respond once to each valid CNT query or set command with the CNT
-response specified below. For a set command, the response MUST contain the
-values read back from the timer registers after the write, which may differ
-from the request if a hardware counter is narrower than 32 bits.
+Firmware MUST respond once to each valid CNT query with the CNT response
+specified below.
 
 ### Immediate stop
 
@@ -237,28 +268,29 @@ no completion tracking for a raw command.
 
 ## Command repetition and idempotence
 
-By default, the controller writes each SET and MOV frame three times. The
-copies may be adjacent with no delay:
+By default, the controller writes each SET, MOV, and MOV_CNT frame three times.
+The copies may be adjacent with no delay:
 
 ```text
 CMD:MOV:15.000,-40.000;CMD:MOV:15.000,-40.000;CMD:MOV:15.000,-40.000;
 ```
 
 Firmware MUST parse each semicolon-terminated frame independently and MUST
-tolerate duplicate SET and MOV frames. Repeating an identical frame MUST be
-idempotent: it must not alter the meaning of the requested reference or target.
+tolerate duplicate SET, MOV, and MOV_CNT frames. Repeating an identical frame
+MUST be idempotent: it must not alter the meaning of the requested reference or
+target.
 
 The repetition count is controller-configurable and MUST NOT be used by
 firmware as part of framing or validation.
 
-The controller writes each VERSION request and each CNT command exactly once.
-Firmware MUST still treat repeated VERSION and CNT frames independently and
-return one response per request.
+The controller writes each VERSION request, CNT query, and SET_CNT command
+exactly once. Firmware MUST still treat repeated VERSION, CNT, and SET_CNT
+frames independently and return one response per request.
 
 ## Firmware-to-controller counter responses
 
-Firmware MUST answer each valid CNT command with exactly one CRLF-terminated
-response:
+Firmware MUST answer each valid CNT or SET_CNT command with exactly one
+CRLF-terminated response:
 
 ```text
 MSG:CNT:PAN=<pan-counter>,TILT=<tilt-counter>;\r\n
@@ -347,8 +379,8 @@ serial scheduling and host latency.
 
 ## Acknowledgement and completion
 
-The protocol defines no ACK or NACK frame. SET and MOV completion is inferred
-from position reports.
+The protocol defines no ACK or NACK frame. SET, MOV, and MOV_CNT completion is
+inferred from position reports.
 
 The controller considers a raw target reached when both axes are within
 `0.11` degrees of the expected raw yaw and pitch.
@@ -369,10 +401,11 @@ prefix.
 
 ## Ordering
 
-The controller serializes SET, MOV, VERSION, CNT, and diagnostic raw
-operations. It does not begin the next queued operation until position reports
-confirm an active SET or MOV operation. VERSION and CNT operations do not wait
-for their responses before the next queued command is eligible to begin.
+The controller serializes SET, MOV, MOV_CNT, SET_CNT, VERSION, CNT, and
+diagnostic raw operations. It does not begin the next queued operation until
+position reports confirm an active SET, MOV, or MOV_CNT operation. VERSION,
+CNT, and SET_CNT operations do not wait for their responses before the next
+queued command is eligible to begin.
 
 Each normal move produces one MOV frame (repeated according to the configured
 repetition count) with the requested physical pan and tilt. The controller MUST

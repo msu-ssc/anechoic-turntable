@@ -238,6 +238,15 @@ class TurntableSession:
             raise NotConnectedError("not connected")
         turntable.set_counters(pan=counters.pan, tilt=counters.tilt)
 
+    def move_to_counters(self, counters: CounterValues) -> None:
+        """Queue one move to encoder-counter targets on the current connection."""
+
+        with self._lock:
+            turntable = self._turntable
+        if turntable is None:
+            raise NotConnectedError("not connected")
+        turntable.move_to_counters(pan=counters.pan, tilt=counters.tilt)
+
     def stop(self) -> None:
         """Immediately stop the connected turntable and cancel queued work."""
 

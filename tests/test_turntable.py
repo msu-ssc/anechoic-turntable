@@ -49,12 +49,18 @@ class FakeSerial:
             coordinates = data.removeprefix(b"CMD:MOV:").removesuffix(b";")
             yaw, pitch = (float(value) for value in coordinates.split(b","))
             self.emit_internal_position(yaw=yaw, pitch=pitch)
+        elif data.startswith(b"CMD:MOV_CNT:PAN=") and self.respond_to_moves:
+            values = data.removeprefix(b"CMD:MOV_CNT:PAN=").removesuffix(b";")
+            pan, tilt = values.split(b",TILT=")
+            yaw = (int(pan) - 43200) / 240
+            pitch = (int(tilt) - 21600) / 240
+            self.emit_internal_position(yaw=yaw, pitch=pitch)
         elif data == b"CMD:VERSION;" and self.firmware_version is not None:
             self.emit(f"MSG:VERSION:{self.firmware_version};\r\n".encode())
         elif data == b"CMD:CNT;":
             self.emit(f"MSG:CNT:PAN={self.counters[0]},TILT={self.counters[1]};\r\n".encode())
-        elif data.startswith(b"CMD:CNT:PAN="):
-            values = data.removeprefix(b"CMD:CNT:PAN=").removesuffix(b";")
+        elif data.startswith(b"CMD:SET_CNT:PAN="):
+            values = data.removeprefix(b"CMD:SET_CNT:PAN=").removesuffix(b";")
             pan, tilt = values.split(b",TILT=")
             self.counters = (int(pan), int(tilt))
             self.emit(f"MSG:CNT:PAN={self.counters[0]},TILT={self.counters[1]};\r\n".encode())
@@ -592,7 +598,7 @@ def test_counter_set_is_written_once_and_invalidates_trusted_position():
 
         event = wait_for(lambda: turntable.most_recent_event(kind="counter"))
         assert (event.pan, event.tilt) == (12345, 5555)
-        assert fake.writes[writes_before_set:] == [b"CMD:CNT:PAN=12345,TILT=5555;"]
+        assert fake.writes[writes_before_set:] == [b"CMD:SET_CNT:PAN=12345,TILT=5555;"]
         state = turntable.get_complete_state()
         assert state.state == turntable2.TurntableState.NOT_SET
         assert not state.has_been_set
@@ -627,10 +633,58 @@ def test_counter_set_waits_behind_an_active_move():
 
         turntable.set_counters(pan=12345, tilt=5555)
         time.sleep(0.03)
-        assert b"CMD:CNT:PAN=12345,TILT=5555;" not in fake.writes
+        assert b"CMD:SET_CNT:PAN=12345,TILT=5555;" not in fake.writes
 
         fake.emit_internal_position(yaw=10, pitch=0)
-        wait_for(lambda: b"CMD:CNT:PAN=12345,TILT=5555;" in fake.writes)
+        wait_for(lambda: b"CMD:SET_CNT:PAN=12345,TILT=5555;" in fake.writes)
+    finally:
+        turntable.close()
+
+
+def test_counter_move_is_repeated_and_tracks_translated_target():
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        wait_for(lambda: turntable.current_position() is not None)
+        writes_before_move = len(fake.writes)
+
+        turntable.move_to_counters(pan=45_600, tilt=20_400)
+
+        wait_for(lambda: len(fake.writes) >= writes_before_move + 3)
+        assert fake.writes[writes_before_move:] == [b"CMD:MOV_CNT:PAN=45600,TILT=20400;"] * 3
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.NOT_SET)
+        assert turntable.current_position() == turntable2.PanTilt(10, -5)
+        assert not turntable.get_complete_state().has_been_set
+    finally:
+        turntable.close()
+
+
+def test_counter_move_uses_300_second_default_timeout():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        wait_for(lambda: turntable.current_position() is not None)
+
+        turntable.move_to_counters(pan=45_600, tilt=20_400)
+
+        snapshot = wait_for(lambda: state if (state := turntable.get_complete_state()).activity_phase == "counter" else None)
+        remaining = (snapshot.activity_timeout_at - snapshot.captured_at).total_seconds()
+        assert remaining == pytest.approx(300, abs=1)
+        assert snapshot.internal_target == turntable2.YawPitch(10, -5)
+    finally:
+        turntable.close()
+
+
+@pytest.mark.parametrize("pan, tilt", [(-1, 0), (0, -1), (2**32, 0), (0, 2**32), (True, 0)])
+def test_counter_move_rejects_values_outside_uint32(pan, tilt):
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        with pytest.raises(ValueError, match="counter"):
+            turntable.move_to_counters(pan=pan, tilt=tilt)
+        assert fake.writes == []
     finally:
         turntable.close()
 

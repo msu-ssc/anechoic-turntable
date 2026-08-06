@@ -61,3 +61,16 @@ def test_firmware_version_command_uses_canonical_version_header() -> None:
     assert '#include "firmware_version.h"' in main_source
     assert 'strcmp(command_to_process, "CMD:VERSION") == 0' in main_source
     assert '"MSG:VERSION:" FIRMWARE_VERSION ";\\r\\n"' in main_source
+
+
+def test_counter_commands_use_exact_frames_and_existing_degree_targets() -> None:
+    """Counter commands parse exact fields before entering existing movement."""
+
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert '"CMD:MOV_CNT:PAN="' in main_source
+    assert '"CMD:SET_CNT:PAN="' in main_source
+    assert '"CMD:CNT:PAN="' not in main_source
+    assert "move_yaw = ((float)azimuth_counter - 43200.0f) / 240.0f;" in main_source
+    assert "move_pitch = ((float)elevation_counter - 21600.0f) / 240.0f;" in main_source
+    assert "if (is_move_command || is_counter_move_command)" in main_source

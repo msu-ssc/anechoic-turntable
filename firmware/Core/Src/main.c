@@ -247,6 +247,9 @@ int parse_counter_number(const char *text, uint32_t *parsed_value)
     if (!is_ascii_digit(text[index])) {
         return -1;
     }
+    if (text[index] == '0' && is_ascii_digit(text[index + 1])) {
+        return -1;
+    }
 
     while (is_ascii_digit(text[index])) {
         uint32_t digit =
@@ -305,13 +308,16 @@ bool parse_set_command(const char *input, float *yaw, float *pitch) {
     return parse_command_coordinates(input, "CMD:SET:", yaw, pitch);
 }
 
-bool parse_counter_set_command(const char *input, uint32_t *azimuth_counter, uint32_t *elevation_counter)
+bool parse_counter_command(
+    const char *input,
+    const char *expected_prefix,
+    uint32_t *azimuth_counter,
+    uint32_t *elevation_counter
+)
 {
-    static const char expected_prefix[] = "CMD:CNT:PAN=";
     static const char expected_separator[] = ",TILT=";
 
-    size_t prefix_length =
-        sizeof(expected_prefix) - 1U;
+    size_t prefix_length = strlen(expected_prefix);
 
     if (strncmp(
             input,
@@ -473,7 +479,18 @@ void MYPROG_main_loop()
 		bool is_set_command = parse_set_command(command_to_process, &settimer1, &settimer2);
 		bool is_version_command = strcmp(command_to_process, "CMD:VERSION") == 0;
     bool is_counter_get_command = strcmp(command_to_process, "CMD:CNT") == 0;
-    bool is_counter_set_command = parse_counter_set_command(command_to_process, &azimuth_counter, &elevation_counter);
+    bool is_counter_move_command = parse_counter_command(
+        command_to_process,
+        "CMD:MOV_CNT:PAN=",
+        &azimuth_counter,
+        &elevation_counter
+    );
+    bool is_counter_set_command = parse_counter_command(
+        command_to_process,
+        "CMD:SET_CNT:PAN=",
+        &azimuth_counter,
+        &elevation_counter
+    );
 		// Set when an emergency stop invalidates the command while it is being parsed.
 		bool command_cancelled = false;
     bool send_counter_response = false;
@@ -513,8 +530,13 @@ void MYPROG_main_loop()
 		{
 			if (!is_version_command)
 			{
-				if (is_move_command)
+				if (is_move_command || is_counter_move_command)
 				{
+					if (is_counter_move_command)
+					{
+						move_yaw = ((float)azimuth_counter - 43200.0f) / 240.0f;
+						move_pitch = ((float)elevation_counter - 21600.0f) / 240.0f;
+					}
 					Azc = move_yaw;
 					Elc = move_pitch;
 					move = 1;

@@ -42,7 +42,7 @@ Version responses do not count as position communication for timeout purposes.
 
 `request_counters()` queues `CMD:CNT;` once without changing trusted position
 state. `set_counters(pan=..., tilt=...)` accepts unsigned 32-bit integer encoder
-counts and queues the corresponding CNT set frame once. Exact responses are
+counts and queues the corresponding SET_CNT frame once. Exact responses are
 available as `most_recent_event(kind="counter")`, a
 `ReceivedMessageCounter` whose `pan` and `tilt` fields contain the raw counter
 values read back by firmware. Counter responses do not count as position
@@ -52,7 +52,19 @@ Directly setting encoder counters changes the firmware coordinate frame and
 stops firmware motion. The controller therefore clears its trusted physical
 position as it attempts the write. A subsequent normal move requires
 `set_position()` or `confirm_position()` first. Counter operations use the
-normal serialized command queue and wait behind an active SET or MOV.
+normal serialized command queue and wait behind an active SET, MOV, or MOV_CNT.
+
+`move_to_counters(pan=..., tilt=..., move_timeout=300.0)` queues a tracked
+MOV_CNT operation using unsigned 32-bit encoder-counter targets. The controller
+repeats the exact frame three times. Firmware converts the targets to degrees
+using pan zero `43200`, tilt zero `21600`, and `240` counts per degree, then
+uses its normal MOV logic. The controller tracks the same converted target and
+sends the immediate stop byte if the operation exceeds its timeout or loses
+communication. MOV_CNT does not establish a trusted physical coordinate frame;
+if position was not trusted before the operation, it remains untrusted after
+completion. Counter targets bypass the physical bounds enforced by `move_to`,
+so diagnostic operators must ensure targets are reachable and mechanically
+safe.
 
 `set_position` and `move_to` queue work and return immediately. Commands are
 processed in order. `move_to` sends physical pan and tilt directly as firmware
