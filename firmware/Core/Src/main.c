@@ -98,6 +98,8 @@ volatile uint32_t unable_to_parse_frame_count = 0;
 volatile uint32_t stop_generation = 0;
 volatile uint32_t emergency_stop_ack_count = 0;
 static const char firmware_version_message[] = "MSG:VERSION:" FIRMWARE_VERSION ";\r\n";
+static const char mov_out_of_bounds_message[] = "MSG:ERR:OUT_OF_BOUNDS_MOV;\r\n";
+static const char set_out_of_bounds_message[] = "MSG:ERR:OUT_OF_BOUNDS_SET;\r\n";
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
