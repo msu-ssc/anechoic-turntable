@@ -24,6 +24,8 @@ from textual.widgets import Label
 from textual.widgets import RichLog
 from textual.widgets import Static
 
+from anechoic_turntable.controller import MOVE_TIMEOUT_ESTIMATE_MULTIPLIER
+from anechoic_turntable.controller import MOVE_TIMEOUT_MARGIN_SECONDS
 from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.controller import TurntableCompleteState
 from anechoic_turntable.controller import TurntableError
@@ -79,6 +81,19 @@ class _TurntableTuiSession(TurntableSession):
         with self._lock:
             turntable = self._turntable
         return () if turntable is None else turntable.command_history()
+
+    def estimate_move_timeout(self, coordinates: Coordinates) -> float:
+        """Estimate the default timeout for one physical move."""
+
+        with self._lock:
+            turntable = self._turntable
+        if turntable is None:
+            raise NotConnectedError("not connected")
+        travel_time = turntable.estimate_time(
+            pan=coordinates.azimuth,
+            tilt=coordinates.elevation,
+        )
+        return travel_time * MOVE_TIMEOUT_ESTIMATE_MULTIPLIER + MOVE_TIMEOUT_MARGIN_SECONDS
 
 
 class ParsedFilterModal(ModalScreen[set[str] | None]):
@@ -321,7 +336,7 @@ class TurntableTui(App[None]):
                     with Horizontal(classes="operation-fields"):
                         yield Input(value="0", placeholder="az", id="move-az", type="number")
                         yield Input(value="0", placeholder="el", id="move-el", type="number")
-                        yield Input(value="300", placeholder="timeout", id="move-timeout", type="number")
+                        yield Input(placeholder="auto", id="move-timeout", type="number")
                     with Horizontal(classes="operation-actions"):
                         yield Button("Move", id="move-submit", variant="primary")
                         yield Button("Go home", id="move-home")
@@ -369,6 +384,12 @@ class TurntableTui(App[None]):
         if command_line:
             self.execute_command(command_line)
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Refresh the automatic timeout when a move coordinate changes."""
+
+        if event.input.id in {"move-az", "move-el"}:
+            self._update_move_timeout_placeholder()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle diagnostic and operation buttons."""
 
@@ -380,7 +401,7 @@ class TurntableTui(App[None]):
         elif button_id == "move-submit":
             self._queue_from_inputs("mov", "move")
         elif button_id == "move-home":
-            self._queue_coordinates("mov", Coordinates(azimuth=0, elevation=0), timeout=240)
+            self._queue_coordinates("mov", Coordinates(azimuth=0, elevation=0))
         elif button_id == "set-submit":
             self._queue_from_inputs("set", "set")
         elif button_id == "set-confirm":
@@ -448,6 +469,7 @@ class TurntableTui(App[None]):
             self.query_one("#serial-parsed", Static).update("—")
             self.query_one("#command-raw", Static).update("—")
             self.query_one("#controller", Static).update("activity: —\ncommunication: —")
+            self._update_move_timeout_placeholder()
             return
 
         self.query_one("#connection", Static).update(f"status: {snapshot.state.value}    port: {self._session.port or '—'}")
@@ -472,6 +494,23 @@ class TurntableTui(App[None]):
         if snapshot.last_error is not None and not self._timeout_error_hidden:
             controller_lines.append(f"error: {snapshot.last_error}")
         self.query_one("#controller", Static).update("\n".join(controller_lines))
+        self._update_move_timeout_placeholder()
+
+    def _update_move_timeout_placeholder(self) -> None:
+        """Show the calculated default while the timeout input is blank."""
+
+        timeout_input = self.query_one("#move-timeout", Input)
+        placeholder = "auto"
+        try:
+            coordinates = Coordinates(
+                azimuth=float(self.query_one("#move-az", Input).value),
+                elevation=float(self.query_one("#move-el", Input).value),
+            )
+            timeout = self._session.estimate_move_timeout(coordinates)
+            placeholder = f"auto: {timeout:.2f} seconds"
+        except (NotConnectedError, TurntableError, ValueError):
+            pass
+        timeout_input.placeholder = placeholder
 
     @work(thread=True, exclusive=True, group="connection")
     def _connect(self) -> None:
@@ -500,7 +539,8 @@ class TurntableTui(App[None]):
                 azimuth=float(self.query_one(f"#{prefix}-az", Input).value),
                 elevation=float(self.query_one(f"#{prefix}-el", Input).value),
             )
-            timeout = float(self.query_one(f"#{prefix}-timeout", Input).value)
+            timeout_value = self.query_one(f"#{prefix}-timeout", Input).value.strip()
+            timeout = None if command == "mov" and not timeout_value else float(timeout_value)
         except ValueError:
             self._write_message("error: az, el, and timeout must be numbers")
             return

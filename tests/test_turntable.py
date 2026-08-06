@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 import anechoic_turntable as turntable2
+from anechoic_turntable.controller import _estimate_axis_time
 
 
 class FakeSerial:
@@ -253,6 +254,78 @@ def test_confirm_trusts_the_current_position_without_sending_set():
 
         turntable.move_to(pan=5, tilt=3)
         wait_for(lambda: b"CMD:MOV:5.000,3.000;" in fake.writes)
+    finally:
+        turntable.close()
+
+
+def test_estimate_time_uses_the_slower_concurrent_axis_without_timeout_margin():
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        wait_for(lambda: turntable.current_position() is not None)
+
+        # Pan estimate: 0.3940 * 10 + 1.2141 = 5.1541 seconds.
+        # Tilt estimate: 0.9038 * 5 + 2.0841 = 6.6031 seconds.
+        assert turntable.estimate_time(pan=10, tilt=5) == pytest.approx(6.6031)
+    finally:
+        turntable.close()
+
+
+def test_estimate_time_requires_a_current_position():
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        with pytest.raises(turntable2.TurntableError, match="current position report"):
+            turntable.estimate_time(pan=10, tilt=5)
+    finally:
+        turntable.close()
+
+
+def test_axis_time_estimate_rejects_an_invalid_axis():
+    with pytest.raises(ValueError, match="Invalid axis: 'roll'"):
+        _estimate_axis_time(10, axis="roll")  # type: ignore[arg-type]
+
+
+def test_default_move_timeout_uses_estimate_with_safety_margin():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        turntable.set_position(pan=-180, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+
+        estimated_time = turntable.estimate_time(pan=180, tilt=0)
+        assert estimated_time == pytest.approx(143.0541)
+
+        turntable.move_to(pan=180, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.MOVING)
+        state = turntable.get_complete_state()
+        actual_timeout = (state.activity_timeout_at - state.captured_at).total_seconds()
+
+        assert actual_timeout == pytest.approx(estimated_time * 1.5 + 5, abs=0.1)
+        assert actual_timeout > 120
+    finally:
+        turntable.close()
+
+
+def test_queued_move_estimates_timeout_from_position_when_it_starts():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+
+        turntable.move_to(pan=180, tilt=0)
+        turntable.move_to(pan=-180, tilt=0)
+        wait_for(lambda: b"CMD:MOV:180.000,0.000;" in fake.writes)
+
+        fake.emit_internal_position(yaw=180, pitch=0)
+        wait_for(lambda: b"CMD:MOV:-180.000,0.000;" in fake.writes)
+        state = turntable.get_complete_state()
+        actual_timeout = (state.activity_timeout_at - state.captured_at).total_seconds()
+        expected_timeout = (0.3940 * 360 + 1.2141) * 1.5 + 5
+
+        assert actual_timeout == pytest.approx(expected_timeout, abs=0.1)
     finally:
         turntable.close()
 

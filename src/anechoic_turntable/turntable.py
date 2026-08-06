@@ -145,11 +145,16 @@ class Turntable:
         *,
         pan: float,
         tilt: float,
-        move_timeout: float = 120.0,
+        move_timeout: float | None = None,
     ) -> None:
-        """Queue a safe move and return immediately."""
+        """Queue a safe move, using an estimated timeout by default."""
 
         self._controller.submit_move(pan=pan, tilt=tilt, timeout=move_timeout)
+
+    def estimate_time(self, *, pan: float, tilt: float) -> float:
+        """Estimate seconds to move from the current position to a target."""
+
+        return self._controller.estimate_time(pan=pan, tilt=tilt)
 
     def confirm_position(self) -> None:
         """Trust the currently reported coordinates without sending a SET."""

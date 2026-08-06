@@ -353,11 +353,6 @@ from position reports.
 The controller considers a raw target reached when both axes are within
 `0.11` degrees of the expected raw yaw and pitch.
 
-Default controller operation deadlines are:
-
-- SET: 5 seconds;
-- MOV: 120 seconds.
-
 If an operation deadline expires, the controller sends immediate stop, clears
 queued work, and enters its timed-out state.
 
