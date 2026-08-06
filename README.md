@@ -25,6 +25,25 @@ Start the terminal UI with:
 uv run anechoic-turntable-tui
 ```
 
+Run the guarded azimuth breakaway-PWM experiment with:
+
+```shell
+uv run anechoic-turntable-pwm-experiment
+```
+
+The experiment UI connects in the background, displays live pan, tilt, and
+signed PWM, and requires explicit position confirmation before starting. Its
+large red **STOP EXPERIMENT** button immediately requests the repeated stop
+bytes. Each PWM attempt is limited by time and displacement and is recorded in
+a timestamped CSV file. Defaults cover ten pan positions, ten tilt positions,
+five repetitions, both directions, and PWM magnitudes 100 through 150 in steps
+of five. The default upper tilt is 40° to retain margin below the encoder
+endpoint. Every candidate is approached from three degrees below the test pan,
+allowed to settle, and stopped after movement, the pulse deadline, or the
+displacement guard. A successful row (`started_moving=True`) is the first
+successful PWM for that location/direction/iteration. Inspect `--help` before
+changing the grid or safety limits.
+
 The Move and Set sections provide pan, tilt, and timeout inputs. The
 move timeout is optional: when blank, subtle placeholder text shows the current
 automatic estimate. Go home moves to pan 0° and tilt 0° with an
