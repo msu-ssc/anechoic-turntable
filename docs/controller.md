@@ -40,6 +40,20 @@ available as `most_recent_event(kind="version")`, a
 `ReceivedMessageVersion` whose `version` field contains the semantic version.
 Version responses do not count as position communication for timeout purposes.
 
+`request_counters()` queues `CMD:CNT;` once without changing trusted position
+state. `set_counters(pan=..., tilt=...)` accepts unsigned 32-bit integer encoder
+counts and queues the corresponding CNT set frame once. Exact responses are
+available as `most_recent_event(kind="counter")`, a
+`ReceivedMessageCounter` whose `pan` and `tilt` fields contain the raw counter
+values read back by firmware. Counter responses do not count as position
+communication for timeout purposes.
+
+Directly setting encoder counters changes the firmware coordinate frame and
+stops firmware motion. The controller therefore clears its trusted physical
+position as it attempts the write. A subsequent normal move requires
+`set_position()` or `confirm_position()` first. Counter operations use the
+normal serialized command queue and wait behind an active SET or MOV.
+
 `set_position` and `move_to` queue work and return immediately. Commands are
 processed in order. `move_to` sends physical pan and tilt directly as firmware
 yaw and pitch. `abort` is the exception: it immediately
@@ -127,7 +141,8 @@ The observable states are:
 
 Every received line becomes an immutable, hashable `ReceivedMessage`.
 Successfully parsed position lines become `ReceivedMessagePosition` events.
-Exact firmware version responses become `ReceivedMessageVersion` events.
+Exact firmware version responses become `ReceivedMessageVersion` events, and
+exact encoder-counter responses become `ReceivedMessageCounter` events.
 These events intentionally preserve raw firmware yaw and pitch. Use
 `current_position()` or `get_complete_state().corrected_position` for physical
 pan and tilt.

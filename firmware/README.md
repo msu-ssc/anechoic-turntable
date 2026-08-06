@@ -16,6 +16,13 @@ Do not use the direct-coordinate controller with the historical TIM1 period of
 `[-90°, 45°]` move range without rollover. The current bounds are inclusive and
 do not yet provide an overshoot margin at exact counter endpoints.
 
+Firmware also accepts `CMD:CNT;` to query the raw encoder counters and
+`CMD:CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` to stop motion and set them
+directly. Both commands return
+`MSG:CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` followed by CRLF. These are
+diagnostic operations; setting counters changes the coordinate frame. See
+[`docs/protocol.md`](../docs/protocol.md) for exact framing and numeric rules.
+
 ## Command-line build
 
 The version-controlled STM32CubeIDE managed-build descriptions under `Debug/`

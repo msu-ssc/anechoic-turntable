@@ -13,6 +13,7 @@ from anechoic_turntable import TurntableState
 from anechoic_turntable import YawPitch
 from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.tui import TurntableTui
@@ -26,6 +27,8 @@ class FakeTurntable:
         self.confirm_calls = 0
         self.abort_calls = 0
         self.raw_writes = []
+        self.counter_requests = 0
+        self.counter_sets = []
         self.closed = False
         self.receive_events = (
             ReceivedMessage(message=b"diagnostic one\r\n"),
@@ -38,6 +41,7 @@ class FakeTurntable:
                 )
                 for index in range(1, 7)
             ),
+            ReceivedMessageCounter(message=b"MSG:CNT:PAN=12345,TILT=5555;\r\n", pan=12345, tilt=5555),
         )
         self.command_writes = (CommandWrite(timestamp=datetime.datetime.now(datetime.timezone.utc), command=b"CMD:VERSION;"),)
         self.snapshot = SimpleNamespace(
@@ -70,6 +74,12 @@ class FakeTurntable:
 
     def send_raw(self, payload):
         self.raw_writes.append(payload)
+
+    def request_counters(self):
+        self.counter_requests += 1
+
+    def set_counters(self, *, pan, tilt):
+        self.counter_sets.append((pan, tilt))
 
     def events(self):
         return self.receive_events
@@ -135,6 +145,45 @@ def test_tui_sends_raw_command_and_stop_command():
             assert table.abort_calls == 1
 
         assert table.abort_calls == 2
+
+    asyncio.run(exercise())
+
+
+def test_tui_queues_counter_set_and_query_commands():
+    async def exercise():
+        table = FakeTurntable()
+        app = TurntableTui(connector=lambda: table, refresh_interval=60)
+
+        async with app.run_test():
+            submit(app, "connect")
+            submit(app, "counter pan=12345 tilt=5555")
+            submit(app, "counter?")
+            app.refresh_controller_state()
+
+            assert table.counter_sets == [(12345, 5555)]
+            assert table.counter_requests == 1
+            assert "counter: pan=12345 tilt=5555" in rendered_text(app.query_one("#serial-parsed", Static))
+
+    asyncio.run(exercise())
+
+
+def test_tui_rejects_malformed_counter_commands():
+    async def exercise():
+        table = FakeTurntable()
+        app = TurntableTui(connector=lambda: table, refresh_interval=60)
+
+        async with app.run_test():
+            submit(app, "connect")
+            for command in (
+                "counter pan=12345",
+                "counter pan=1.5 tilt=2",
+                "counter pan=-1 tilt=2",
+                "counter? now",
+            ):
+                submit(app, command)
+
+            assert table.counter_sets == []
+            assert table.counter_requests == 0
 
     asyncio.run(exercise())
 
@@ -243,7 +292,7 @@ def test_tui_move_set_and_filter_controls():
             await pilot.click("#filter-parsed")
             app.screen.query_one("#filter-position", Checkbox).value = False
             await pilot.click("#apply-filter")
-            assert rendered_text(app.query_one("#serial-parsed", Static)) == "other\nversion: 1.2.3"
+            assert rendered_text(app.query_one("#serial-parsed", Static)) == "other\nversion: 1.2.3\ncounter: pan=12345 tilt=5555"
 
         assert table.abort_calls == 1
 

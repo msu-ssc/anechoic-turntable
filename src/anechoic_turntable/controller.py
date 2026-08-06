@@ -15,6 +15,7 @@ from typing import Literal
 from typing import overload
 
 from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.positions import PanTilt
@@ -25,6 +26,7 @@ ALLOWABLE_DISCREPANCY_DEG = 0.11
 ABSOLUTE_PAN_BOUNDS = (-180.0, 180.0)
 ABSOLUTE_TILT_BOUNDS = (-90.0, 45.0)
 SET_TILT_BOUNDS = (-90.0, 90.0)
+UINT32_MAX = 2**32 - 1
 
 
 class TurntableError(Exception):
@@ -124,7 +126,19 @@ class _VersionCommand:
     generation: int
 
 
-_Command = _SetCommand | _MoveCommand | _RawCommand | _VersionCommand
+@dataclasses.dataclass(frozen=True)
+class _CounterRequestCommand:
+    generation: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _CounterSetCommand:
+    generation: int
+    pan: int
+    tilt: int
+
+
+_Command = _SetCommand | _MoveCommand | _RawCommand | _VersionCommand | _CounterRequestCommand | _CounterSetCommand
 
 
 @dataclasses.dataclass
@@ -274,6 +288,28 @@ class ControllerThread(threading.Thread):
             self._ensure_open()
             self._command_queue.put(_VersionCommand(generation=self._command_generation))
 
+    def submit_counter_request(self) -> None:
+        """Queue one encoder-counter query."""
+
+        with self._lock:
+            self._ensure_open()
+            self._command_queue.put(_CounterRequestCommand(generation=self._command_generation))
+
+    def submit_counter_set(self, *, pan: int, tilt: int) -> None:
+        """Queue one encoder-counter update."""
+
+        _validate_counter("pan", pan)
+        _validate_counter("tilt", tilt)
+        with self._lock:
+            self._ensure_open()
+            self._command_queue.put(
+                _CounterSetCommand(
+                    generation=self._command_generation,
+                    pan=pan,
+                    tilt=tilt,
+                )
+            )
+
     def submit_abort(self) -> None:
         """Immediately stop movement and invalidate all previously submitted work."""
 
@@ -363,6 +399,9 @@ class ControllerThread(threading.Thread):
     def most_recent_event(self, *, kind: Literal["version"]) -> ReceivedMessageVersion | None: ...
 
     @overload
+    def most_recent_event(self, *, kind: Literal["counter"]) -> ReceivedMessageCounter | None: ...
+
+    @overload
     def most_recent_event(self, *, kind: Literal["other"]) -> ReceivedMessage | None: ...
 
     @overload
@@ -372,7 +411,7 @@ class ControllerThread(threading.Thread):
         with self._lock:
             if kind is None:
                 return self._events[-1] if self._events else None
-            if kind not in {"position", "version", "other"}:
+            if kind not in {"position", "version", "counter", "other"}:
                 raise ValueError(f"Unknown event kind: {kind!r}")
             return self._most_recent_by_kind.get(kind)
 
@@ -529,12 +568,39 @@ class ControllerThread(threading.Thread):
                 self._begin_move(command)
             elif isinstance(command, _RawCommand):
                 self._send_raw(command)
-            else:
+            elif isinstance(command, _VersionCommand):
                 self._send_version_request(command)
+            elif isinstance(command, _CounterRequestCommand):
+                self._send_counter_request(command)
+            else:
+                self._send_counter_set(command)
 
     def _send_version_request(self, command: _VersionCommand) -> None:
         if command.generation == self._command_generation:
             self._write_command(b"CMD:VERSION;", repetitions=1)
+
+    def _send_counter_request(self, command: _CounterRequestCommand) -> None:
+        if command.generation == self._command_generation:
+            self._write_command(b"CMD:CNT;", repetitions=1)
+
+    def _send_counter_set(self, command: _CounterSetCommand) -> None:
+        with self._lock:
+            if command.generation != self._command_generation:
+                return
+            # Direct counter changes redefine the firmware's coordinates.
+            # Discard the physical frame before attempting the write because a
+            # write error cannot prove that the firmware left the values alone.
+            self._position_history.clear()
+            self._position_history_generation += 1
+            self._has_been_set = False
+            self._set_requested = False
+            self._corrected_position = None
+            if self._state != TurntableState.NO_COMMUNICATION:
+                self._state = TurntableState.NOT_SET
+            self._write_command(
+                f"CMD:CNT:PAN={command.pan},TILT={command.tilt};".encode("ascii"),
+                repetitions=1,
+            )
 
     def _send_raw(self, command: _RawCommand) -> None:
         with self._lock:
@@ -633,6 +699,11 @@ def _make_deadline(timeout: float) -> tuple[float, datetime.datetime]:
 def _validate_timeout(timeout: float) -> None:
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be a finite number greater than zero")
+
+
+def _validate_counter(name: str, value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= UINT32_MAX:
+        raise ValueError(f"{name} counter must be an integer within [0, {UINT32_MAX}]")
 
 
 def _validate_position(*, pan: float, tilt: float) -> None:
