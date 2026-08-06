@@ -37,3 +37,7 @@ Made several backwards compatible changes to the controller TUI:
 ## 0.6.0 — 2026-08-03
 
 Make default move timeout be dynamic based on empirical measurements of travel time.
+
+## 0.7.0 — 2026-08-06
+
+Add `CMD:CNT;` and `CMD:CNT:PAN=12345,TILT=12345;` commands to get/set encoder position
