@@ -41,3 +41,7 @@ Make default move timeout be dynamic based on empirical measurements of travel t
 ## 0.7.0 — 2026-08-06
 
 Add `CMD:CNT;` and `CMD:CNT:PAN=12345,TILT=12345;` commands to get/set encoder position
+
+## 0.8.0 — 2026-08-06
+
+Add counter SET and MOV commands
