@@ -29,6 +29,10 @@ SET_TILT_BOUNDS = (-90.0, 90.0)
 UINT32_MAX = 2**32 - 1
 MOVE_TIMEOUT_ESTIMATE_MULTIPLIER = 1.5
 MOVE_TIMEOUT_MARGIN_SECONDS = 5.0
+COUNTER_MOVE_TIMEOUT_SECONDS = 300.0
+COUNTS_PER_DEGREE = 240.0
+PAN_ZERO_COUNTER = 43_200
+TILT_ZERO_COUNTER = 21_600
 
 
 class TurntableError(Exception):
@@ -140,7 +144,15 @@ class _CounterSetCommand:
     tilt: int
 
 
-_Command = _SetCommand | _MoveCommand | _RawCommand | _VersionCommand | _CounterRequestCommand | _CounterSetCommand
+@dataclasses.dataclass(frozen=True)
+class _CounterMoveCommand:
+    generation: int
+    pan: int
+    tilt: int
+    timeout: float
+
+
+_Command = _SetCommand | _MoveCommand | _RawCommand | _VersionCommand | _CounterRequestCommand | _CounterSetCommand | _CounterMoveCommand
 
 
 @dataclasses.dataclass
@@ -158,6 +170,7 @@ class _MoveOperation:
     deadline: float
     timeout_at: datetime.datetime
     internal_target: YawPitch
+    phase: Literal["direct", "counter"]
 
 
 _Operation = _SetOperation | _MoveOperation
@@ -326,6 +339,23 @@ class ControllerThread(threading.Thread):
                 )
             )
 
+    def submit_counter_move(self, *, pan: int, tilt: int, timeout: float) -> None:
+        """Queue one move to raw encoder-counter targets."""
+
+        _validate_counter("pan", pan)
+        _validate_counter("tilt", tilt)
+        _validate_timeout(timeout)
+        with self._lock:
+            self._ensure_open()
+            self._command_queue.put(
+                _CounterMoveCommand(
+                    generation=self._command_generation,
+                    pan=pan,
+                    tilt=tilt,
+                    timeout=timeout,
+                )
+            )
+
     def submit_abort(self) -> None:
         """Immediately stop movement and invalidate all previously submitted work."""
 
@@ -370,7 +400,7 @@ class ControllerThread(threading.Thread):
                 internal_target = YawPitch(operation.pan, operation.tilt)
             elif isinstance(operation, _MoveOperation):
                 activity = TurntableActivity.MOVING
-                activity_phase = "direct"
+                activity_phase = operation.phase
                 timeout_at = operation.timeout_at
                 target_position = PanTilt(operation.pan, operation.tilt)
                 internal_target = operation.internal_target
@@ -531,7 +561,10 @@ class ControllerThread(threading.Thread):
                     operation.internal_target,
                 ):
                     self._operation = None
-                    self._state = TurntableState.MOVING if self._has_pending_commands() else TurntableState.STOPPED
+                    if self._has_pending_commands():
+                        self._state = TurntableState.MOVING
+                    else:
+                        self._state = TurntableState.STOPPED if self._has_been_set else TurntableState.NOT_SET
 
             assert self._corrected_position is not None
             self._position_history.append(
@@ -588,8 +621,10 @@ class ControllerThread(threading.Thread):
                 self._send_version_request(command)
             elif isinstance(command, _CounterRequestCommand):
                 self._send_counter_request(command)
-            else:
+            elif isinstance(command, _CounterSetCommand):
                 self._send_counter_set(command)
+            else:
+                self._begin_counter_move(command)
 
     def _send_version_request(self, command: _VersionCommand) -> None:
         if command.generation == self._command_generation:
@@ -614,7 +649,7 @@ class ControllerThread(threading.Thread):
             if self._state != TurntableState.NO_COMMUNICATION:
                 self._state = TurntableState.NOT_SET
             self._write_command(
-                f"CMD:CNT:PAN={command.pan},TILT={command.tilt};".encode("ascii"),
+                f"CMD:SET_CNT:PAN={command.pan},TILT={command.tilt};".encode("ascii"),
                 repetitions=1,
             )
 
@@ -676,10 +711,28 @@ class ControllerThread(threading.Thread):
                 deadline=deadline,
                 timeout_at=timeout_at,
                 internal_target=YawPitch(yaw=command.pan, pitch=command.tilt),
+                phase="direct",
             )
             self._operation = operation
             self._state = TurntableState.MOVING
             self._write_command(_format_move_command(yaw=command.pan, pitch=command.tilt))
+
+    def _begin_counter_move(self, command: _CounterMoveCommand) -> None:
+        with self._lock:
+            if command.generation != self._command_generation:
+                return
+            target = _counter_target_to_yaw_pitch(pan=command.pan, tilt=command.tilt)
+            deadline, timeout_at = _make_deadline(command.timeout)
+            self._operation = _MoveOperation(
+                pan=target.yaw,
+                tilt=target.pitch,
+                deadline=deadline,
+                timeout_at=timeout_at,
+                internal_target=target,
+                phase="counter",
+            )
+            self._state = TurntableState.MOVING
+            self._write_command(f"CMD:MOV_CNT:PAN={command.pan},TILT={command.tilt};".encode("ascii"))
 
     def _write_command(self, command: bytes, *, repetitions: int | None = None) -> None:
         with self._lock:
@@ -738,6 +791,15 @@ def _validate_position(*, pan: float, tilt: float) -> None:
         raise ValueError(f"pan must be within {ABSOLUTE_PAN_BOUNDS}")
     if not math.isfinite(tilt) or not ABSOLUTE_TILT_BOUNDS[0] <= tilt <= ABSOLUTE_TILT_BOUNDS[1]:
         raise ValueError(f"tilt must be within {ABSOLUTE_TILT_BOUNDS}")
+
+
+def _counter_target_to_yaw_pitch(*, pan: int, tilt: int) -> YawPitch:
+    """Convert raw counter targets exactly as the firmware does."""
+
+    return YawPitch(
+        yaw=(pan - PAN_ZERO_COUNTER) / COUNTS_PER_DEGREE,
+        pitch=(tilt - TILT_ZERO_COUNTER) / COUNTS_PER_DEGREE,
+    )
 
 
 def _validate_set_position(*, pan: float, tilt: float) -> None:

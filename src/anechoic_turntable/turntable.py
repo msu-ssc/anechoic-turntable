@@ -11,6 +11,7 @@ from typing import overload
 import serial
 from typing_extensions import Self
 
+from anechoic_turntable.controller import COUNTER_MOVE_TIMEOUT_SECONDS
 from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.controller import ControllerThread
 from anechoic_turntable.controller import PositionSample
@@ -180,6 +181,17 @@ class Turntable:
         """Queue one direct encoder-counter update and return immediately."""
 
         self._controller.submit_counter_set(pan=pan, tilt=tilt)
+
+    def move_to_counters(
+        self,
+        *,
+        pan: int,
+        tilt: int,
+        move_timeout: float = COUNTER_MOVE_TIMEOUT_SECONDS,
+    ) -> None:
+        """Queue a move to raw encoder-counter targets."""
+
+        self._controller.submit_counter_move(pan=pan, tilt=tilt, timeout=move_timeout)
 
     def abort(self) -> None:
         """Immediately stop movement and invalidate all queued commands."""

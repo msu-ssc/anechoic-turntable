@@ -29,6 +29,7 @@ class FakeTurntable:
         self.raw_writes = []
         self.counter_requests = 0
         self.counter_sets = []
+        self.counter_moves = []
         self.closed = False
         self.estimated_travel_time = 10.0
         self.receive_events = (
@@ -84,6 +85,9 @@ class FakeTurntable:
 
     def set_counters(self, *, pan, tilt):
         self.counter_sets.append((pan, tilt))
+
+    def move_to_counters(self, *, pan, tilt, move_timeout=300.0):
+        self.counter_moves.append((pan, tilt, move_timeout))
 
     def events(self):
         return self.receive_events
@@ -153,18 +157,20 @@ def test_tui_sends_raw_command_and_stop_command():
     asyncio.run(exercise())
 
 
-def test_tui_queues_counter_set_and_query_commands():
+def test_tui_queues_counter_set_move_and_query_commands():
     async def exercise():
         table = FakeTurntable()
         app = TurntableTui(connector=lambda: table, refresh_interval=60)
 
         async with app.run_test():
             submit(app, "connect")
-            submit(app, "counter pan=12345 tilt=5555")
+            submit(app, "set_cnt pan=12345 tilt=5555")
+            submit(app, "mov_cnt tilt=20400 pan=45600")
             submit(app, "counter?")
             app.refresh_controller_state()
 
             assert table.counter_sets == [(12345, 5555)]
+            assert table.counter_moves == [(45600, 20400, 300.0)]
             assert table.counter_requests == 1
             assert "counter: pan=12345 tilt=5555" in rendered_text(app.query_one("#serial-parsed", Static))
 
@@ -179,14 +185,15 @@ def test_tui_rejects_malformed_counter_commands():
         async with app.run_test():
             submit(app, "connect")
             for command in (
-                "counter pan=12345",
-                "counter pan=1.5 tilt=2",
-                "counter pan=-1 tilt=2",
+                "set_cnt pan=12345",
+                "set_cnt pan=1.5 tilt=2",
+                "mov_cnt pan=-1 tilt=2",
                 "counter? now",
             ):
                 submit(app, command)
 
             assert table.counter_sets == []
+            assert table.counter_moves == []
             assert table.counter_requests == 0
 
     asyncio.run(exercise())
