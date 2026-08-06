@@ -57,3 +57,9 @@ Add `CMD:CNT;` and `CMD:CNT:PAN=12345,TILT=12345;` commands to get/set encoder p
 ## 2.3.0 — 2026-08-06
 
 Add counter SET and MOV commands
+
+## 2.4.0 — 2026-08-06
+
+Add firmware ACK/NAK response to all commands.
+
+(Note that this is considered only a minor change because external interfaces that completely ignore these ACKs and NAKs would still function exactly the same.)
