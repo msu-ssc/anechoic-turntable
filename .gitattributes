@@ -1,0 +1,2 @@
+# Store detected text files with LF endings and check them out as LF.
+* text=auto eol=lf
