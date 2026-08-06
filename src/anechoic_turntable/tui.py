@@ -30,6 +30,7 @@ from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.controller import TurntableCompleteState
 from anechoic_turntable.controller import TurntableError
 from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.positions import PanTilt
@@ -40,10 +41,11 @@ from anechoic_turntable.session import Coordinates
 from anechoic_turntable.session import NotConnectedError
 from anechoic_turntable.session import TurntableSession
 from anechoic_turntable.session import parse_coordinates
+from anechoic_turntable.session import parse_counter_values
 from anechoic_turntable.turntable import Turntable
 
-_COMMAND_HELP = "Commands: connect | info | confirm | set az=<number> el=<number> | mov az=<number> el=<number> | raw <ASCII bytes> | stop | help | exit"
-_MESSAGE_KINDS = ("position", "version", "other")
+_COMMAND_HELP = "Commands: connect | info | confirm | set az=<number> el=<number> | mov az=<number> el=<number> | counter pan=<integer> tilt=<integer> | counter? | raw <ASCII bytes> | stop | help | exit"
+_MESSAGE_KINDS = ("position", "version", "counter", "other")
 
 
 class _TurntableTuiSession(TurntableSession):
@@ -426,6 +428,12 @@ class TurntableTui(App[None]):
             self._confirm_position()
         elif command in {"set", "mov"}:
             self._queue_position(command, arguments)
+        elif command == "counter":
+            self._set_counters(arguments)
+        elif command == "counter?":
+            if self._reject_arguments(command, arguments):
+                return
+            self._request_counters()
         elif command == "raw":
             self._send_raw(arguments)
         elif command == "stop":
@@ -569,6 +577,25 @@ class TurntableTui(App[None]):
         self._write_message(f"raw queued: {command}")
         self.refresh_controller_state()
 
+    def _set_counters(self, arguments: str) -> None:
+        try:
+            counters = parse_counter_values(arguments)
+            self._session.set_counters(counters)
+        except (CommandSyntaxError, NotConnectedError, TurntableError, ValueError) as exc:
+            self._write_message(f"error: {exc}")
+            return
+        self._write_message(f"counter set queued: pan={counters.pan} tilt={counters.tilt}")
+        self.refresh_controller_state()
+
+    def _request_counters(self) -> None:
+        try:
+            self._session.request_counters()
+        except (NotConnectedError, TurntableError) as exc:
+            self._write_message(f"error: {exc}")
+            return
+        self._write_message("counter query queued")
+        self.refresh_controller_state()
+
     def _stop_turntable(self) -> None:
         try:
             self._session.stop()
@@ -660,6 +687,8 @@ class TurntableTui(App[None]):
             return f"position: az={event.yaw if event.yaw is not None else '—'} el={event.pitch if event.pitch is not None else '—'}"
         if isinstance(event, ReceivedMessageVersion):
             return f"version: {event.version}"
+        if isinstance(event, ReceivedMessageCounter):
+            return f"counter: pan={event.pan} tilt={event.tilt}"
         return "other"
 
 

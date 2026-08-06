@@ -18,6 +18,7 @@ from anechoic_turntable.controller import TurntableCompleteState
 from anechoic_turntable.controller import TurntableError
 from anechoic_turntable.controller import TurntableState
 from anechoic_turntable.messages import ReceivedMessage
+from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.positions import PanTilt
@@ -170,6 +171,16 @@ class Turntable:
 
         self._controller.submit_version_request()
 
+    def request_counters(self) -> None:
+        """Queue one encoder-counter query and return immediately."""
+
+        self._controller.submit_counter_request()
+
+    def set_counters(self, *, pan: int, tilt: int) -> None:
+        """Queue one direct encoder-counter update and return immediately."""
+
+        self._controller.submit_counter_set(pan=pan, tilt=tilt)
+
     def abort(self) -> None:
         """Immediately stop movement and invalidate all queued commands."""
 
@@ -193,6 +204,9 @@ class Turntable:
 
     @overload
     def most_recent_event(self, *, kind: Literal["version"]) -> ReceivedMessageVersion | None: ...
+
+    @overload
+    def most_recent_event(self, *, kind: Literal["counter"]) -> ReceivedMessageCounter | None: ...
 
     @overload
     def most_recent_event(self, *, kind: Literal["other"]) -> ReceivedMessage | None: ...

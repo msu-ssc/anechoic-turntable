@@ -12,6 +12,8 @@ from pydantic import Field
 
 _POSITION_PATTERN = re.compile(rb"Pos= El: (?P<pitch>-?\d{1,3}\.\d{2}) , Az: (?P<yaw>-?\d{1,3}\.\d{2})")
 _VERSION_PATTERN = re.compile(rb"MSG:VERSION:(?P<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*));\r\n\Z")
+_COUNTER_PATTERN = re.compile(rb"MSG:CNT:PAN=(?P<pan>0|[1-9]\d*),TILT=(?P<tilt>0|[1-9]\d*);\r\n\Z")
+_UINT32_MAX = 2**32 - 1
 
 
 def _utc_now() -> datetime.datetime:
@@ -23,7 +25,7 @@ class ReceivedMessage(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    kind: Literal["position", "version", "other"] = "other"
+    kind: Literal["position", "version", "counter", "other"] = "other"
     message: bytes
     timestamp: datetime.datetime = Field(default_factory=_utc_now)
 
@@ -48,6 +50,14 @@ class ReceivedMessageVersion(ReceivedMessage):
     version: str
 
 
+class ReceivedMessageCounter(ReceivedMessage):
+    """A firmware encoder-counter response."""
+
+    kind: Literal["counter"] = "counter"
+    pan: int
+    tilt: int
+
+
 def parse_received_message(
     message: bytes,
     *,
@@ -63,6 +73,18 @@ def parse_received_message(
             timestamp=timestamp,
             version=version_match.group("version").decode("ascii"),
         )
+
+    counter_match = _COUNTER_PATTERN.fullmatch(message)
+    if counter_match is not None:
+        pan = int(counter_match.group("pan"))
+        tilt = int(counter_match.group("tilt"))
+        if pan <= _UINT32_MAX and tilt <= _UINT32_MAX:
+            return ReceivedMessageCounter(
+                message=message,
+                timestamp=timestamp,
+                pan=pan,
+                tilt=tilt,
+            )
 
     match = _POSITION_PATTERN.search(message)
     if match is None:

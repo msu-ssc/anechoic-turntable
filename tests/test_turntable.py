@@ -10,10 +10,18 @@ from anechoic_turntable.controller import _estimate_axis_time
 
 
 class FakeSerial:
-    def __init__(self, *, respond_to_moves=True, respond_to_sets=True, firmware_version="2.0.8"):
+    def __init__(
+        self,
+        *,
+        respond_to_moves=True,
+        respond_to_sets=True,
+        firmware_version="2.0.8",
+        counters=(43200, 21600),
+    ):
         self.respond_to_moves = respond_to_moves
         self.respond_to_sets = respond_to_sets
         self.firmware_version = firmware_version
+        self.counters = counters
         self.writes = []
         self.closed = False
         self._input = bytearray()
@@ -43,6 +51,13 @@ class FakeSerial:
             self.emit_internal_position(yaw=yaw, pitch=pitch)
         elif data == b"CMD:VERSION;" and self.firmware_version is not None:
             self.emit(f"MSG:VERSION:{self.firmware_version};\r\n".encode())
+        elif data == b"CMD:CNT;":
+            self.emit(f"MSG:CNT:PAN={self.counters[0]},TILT={self.counters[1]};\r\n".encode())
+        elif data.startswith(b"CMD:CNT:PAN="):
+            values = data.removeprefix(b"CMD:CNT:PAN=").removesuffix(b";")
+            pan, tilt = values.split(b",TILT=")
+            self.counters = (int(pan), int(tilt))
+            self.emit(f"MSG:CNT:PAN={self.counters[0]},TILT={self.counters[1]};\r\n".encode())
         return len(data)
 
     def close(self):
@@ -103,6 +118,33 @@ def test_version_response_becomes_a_typed_event():
     assert event.kind == "version"
     assert event.version == "2.0.8"
     assert hash(event)
+
+
+def test_counter_response_becomes_a_typed_event():
+    event = turntable2.parse_received_message(b"MSG:CNT:PAN=12345,TILT=5555;\r\n")
+
+    assert isinstance(event, turntable2.ReceivedMessageCounter)
+    assert event.kind == "counter"
+    assert event.pan == 12345
+    assert event.tilt == 5555
+    assert hash(event)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        b"MSG:CNT:pan=12345,tilt=5555;\r\n",
+        b"MSG:CNT:PAN=+1,TILT=2;\r\n",
+        b"MSG:CNT:PAN=-1,TILT=2;\r\n",
+        b"MSG:CNT:PAN=01,TILT=2;\r\n",
+        b"MSG:CNT:PAN=4294967296,TILT=2;\r\n",
+        b"MSG:CNT:PAN=1,TILT=2\r\n",
+        b"prefix MSG:CNT:PAN=1,TILT=2;\r\n",
+        b"MSG:CNT:PAN=1,TILT=2;\n",
+    ],
+)
+def test_malformed_counter_response_becomes_an_other_event(message):
+    assert type(turntable2.parse_received_message(message)) is turntable2.ReceivedMessage
 
 
 @pytest.mark.parametrize(
@@ -511,6 +553,84 @@ def test_version_request_is_written_once_and_preserves_trusted_position():
         assert state.state == turntable2.TurntableState.STOPPED
         assert state.has_been_set
         assert state.corrected_position == turntable2.PanTilt(0, 0)
+    finally:
+        turntable.close()
+
+
+def test_counter_request_is_written_once_and_preserves_trusted_position():
+    fake = FakeSerial(counters=(12345, 5555))
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        writes_before_request = len(fake.writes)
+
+        turntable.request_counters()
+
+        event = wait_for(lambda: turntable.most_recent_event(kind="counter"))
+        assert isinstance(event, turntable2.ReceivedMessageCounter)
+        assert (event.pan, event.tilt) == (12345, 5555)
+        assert fake.writes[writes_before_request:] == [b"CMD:CNT;"]
+        state = turntable.get_complete_state()
+        assert state.has_been_set
+        assert state.corrected_position == turntable2.PanTilt(0, 0)
+    finally:
+        turntable.close()
+
+
+def test_counter_set_is_written_once_and_invalidates_trusted_position():
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        writes_before_set = len(fake.writes)
+
+        turntable.set_counters(pan=12345, tilt=5555)
+
+        event = wait_for(lambda: turntable.most_recent_event(kind="counter"))
+        assert (event.pan, event.tilt) == (12345, 5555)
+        assert fake.writes[writes_before_set:] == [b"CMD:CNT:PAN=12345,TILT=5555;"]
+        state = turntable.get_complete_state()
+        assert state.state == turntable2.TurntableState.NOT_SET
+        assert not state.has_been_set
+        assert state.corrected_position is None
+        with pytest.raises(turntable2.TurntableError, match="must be set"):
+            turntable.move_to(pan=0, tilt=0)
+    finally:
+        turntable.close()
+
+
+@pytest.mark.parametrize("pan, tilt", [(-1, 0), (0, -1), (2**32, 0), (0, 2**32), (1.5, 0)])
+def test_counter_set_rejects_values_outside_uint32(pan, tilt):
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        with pytest.raises(ValueError, match="counter"):
+            turntable.set_counters(pan=pan, tilt=tilt)
+        assert fake.writes == []
+    finally:
+        turntable.close()
+
+
+def test_counter_set_waits_behind_an_active_move():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        turntable.move_to(pan=10, tilt=0)
+        wait_for(lambda: b"CMD:MOV:10.000,0.000;" in fake.writes)
+
+        turntable.set_counters(pan=12345, tilt=5555)
+        time.sleep(0.03)
+        assert b"CMD:CNT:PAN=12345,TILT=5555;" not in fake.writes
+
+        fake.emit_internal_position(yaw=10, pitch=0)
+        wait_for(lambda: b"CMD:CNT:PAN=12345,TILT=5555;" in fake.writes)
     finally:
         turntable.close()
 

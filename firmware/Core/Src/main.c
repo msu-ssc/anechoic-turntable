@@ -239,6 +239,32 @@ int parse_wire_number(const char *text, float *parsed_value) {
     return index;
 }
 
+int parse_counter_number(const char *text, uint32_t *parsed_value)
+{
+    int index = 0;
+    uint32_t value = 0;
+
+    if (!is_ascii_digit(text[index])) {
+        return -1;
+    }
+
+    while (is_ascii_digit(text[index])) {
+        uint32_t digit =
+            (uint32_t)(text[index] - '0');
+
+        if (value > (UINT32_MAX - digit) / 10U) {
+            return -1;
+        }
+
+        value = (value * 10U) + digit;
+        index++;
+    }
+
+    *parsed_value = value;
+
+    return index;
+}
+
 // Parse both coordinates from one complete command string.
 // expected_prefix distinguishes commands such as "CMD:MOV:" and "CMD:SET:".
 // Example input: "CMD:MOV:15.000,-40.000" (the receive callback removed the semicolon).
@@ -277,6 +303,62 @@ bool parse_mov_command(const char *input, float *yaw, float *pitch) {
 
 bool parse_set_command(const char *input, float *yaw, float *pitch) {
     return parse_command_coordinates(input, "CMD:SET:", yaw, pitch);
+}
+
+bool parse_counter_set_command(const char *input, uint32_t *azimuth_counter, uint32_t *elevation_counter)
+{
+    static const char expected_prefix[] = "CMD:CNT:PAN=";
+    static const char expected_separator[] = ",TILT=";
+
+    size_t prefix_length =
+        sizeof(expected_prefix) - 1U;
+
+    if (strncmp(
+            input,
+            expected_prefix,
+            prefix_length
+        ) != 0) {
+        return false;
+    }
+
+    const char *counter_text =
+        input + prefix_length;
+
+    uint32_t parsed_azimuth = 0;
+
+    int azimuth_length = parse_counter_number(
+        counter_text,
+        &parsed_azimuth
+    );
+
+    if (azimuth_length < 0 ||
+        strncmp(
+            counter_text + azimuth_length,
+            expected_separator,
+            sizeof(expected_separator) - 1U
+        ) != 0) {
+        return false;
+    }
+
+    const char *elevation_text =
+        counter_text + azimuth_length + sizeof(expected_separator) - 1U;
+
+    uint32_t parsed_elevation = 0;
+
+    int elevation_length = parse_counter_number(
+        elevation_text,
+        &parsed_elevation
+    );
+
+    if (elevation_length < 0 ||
+        elevation_text[elevation_length] != '\0') {
+        return false;
+    }
+
+    *azimuth_counter = parsed_azimuth;
+    *elevation_counter = parsed_elevation;
+
+    return true;
 }
 
 /* USER CODE END PV */
@@ -346,7 +428,7 @@ void MYPROG_main_loop()
 {
 	float settimer1 =0;
 	float settimer2 =0;
-	char sendbuffer[42];
+	char sendbuffer[64];
 	// Private command copy used by the main loop after releasing the shared UART buffer.
 	char command_to_process[sizeof(rxBuffer_command)];
 	// True only when command_to_process contains a command to parse during this loop.
@@ -384,12 +466,17 @@ void MYPROG_main_loop()
 		// Keep parsed movement coordinates local until the complete command can be applied safely.
 		float move_yaw = 0.0f;
 		float move_pitch = 0.0f;
+    uint32_t azimuth_counter = 0;
+    uint32_t elevation_counter = 0;
 		// These flags identify which supported command shape matched the private copy.
 		bool is_move_command = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
 		bool is_set_command = parse_set_command(command_to_process, &settimer1, &settimer2);
 		bool is_version_command = strcmp(command_to_process, "CMD:VERSION") == 0;
+    bool is_counter_get_command = strcmp(command_to_process, "CMD:CNT") == 0;
+    bool is_counter_set_command = parse_counter_set_command(command_to_process, &azimuth_counter, &elevation_counter);
 		// Set when an emergency stop invalidates the command while it is being parsed.
 		bool command_cancelled = false;
+    bool send_counter_response = false;
 
 		// Parsing happens with interrupts enabled. Pause them again only while applying
 		// the result, and first make sure p was not received during parsing.
@@ -398,6 +485,30 @@ void MYPROG_main_loop()
 		{
 			command_cancelled = true;
 		}
+    else if (is_counter_get_command)
+    {
+      azimuth_counter = TIM2->CNT;
+      elevation_counter = TIM1->CNT;
+      send_counter_response = true;
+    }
+    else if (is_counter_set_command)
+    {
+      move = 0;
+      move_az = 0;
+      move_el = 0;
+      mode = 0;
+
+      MYPROG_disable_az();
+      MYPROG_disable_el();
+
+      TIM2->CNT = azimuth_counter;
+      TIM1->CNT = elevation_counter;
+
+      azimuth_counter = TIM2->CNT;
+      elevation_counter = TIM1->CNT;
+
+      send_counter_response = true;
+    }
 		else
 		{
 			if (!is_version_command)
@@ -428,7 +539,18 @@ void MYPROG_main_loop()
 		}
 		__enable_irq();
 
-		if (!command_cancelled && is_version_command)
+    if (!command_cancelled && send_counter_response)
+    {
+      int counter_message_length = snprintf(sendbuffer, sizeof(sendbuffer),
+      "MSG:CNT:PAN=%lu,TILT=%lu;\r\n",
+      (unsigned long)azimuth_counter,(unsigned long)elevation_counter);
+
+      if (counter_message_length > 0 && counter_message_length < (int)sizeof(sendbuffer))
+      {
+        MYPROG_SendData(sendbuffer, counter_message_length);
+      }
+    }
+    else if (!command_cancelled && is_version_command)
 		{
 			MYPROG_SendData(firmware_version_message, (int)sizeof(firmware_version_message) - 1);
 		}

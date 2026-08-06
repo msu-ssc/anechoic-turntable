@@ -15,6 +15,8 @@ from anechoic_turntable.turntable import Turntable
 
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 _COORDINATE = re.compile(rf"(?P<axis>az|el)=(?P<value>{_NUMBER})\Z")
+_COUNTER = re.compile(r"(?P<axis>pan|tilt)=(?P<value>\d+)\Z")
+_UINT32_MAX = 2**32 - 1
 
 
 class CommandSyntaxError(ValueError):
@@ -31,6 +33,14 @@ class Coordinates:
 
     azimuth: float
     elevation: float
+
+
+@dataclass(frozen=True)
+class CounterValues:
+    """Raw pan and tilt encoder-counter values."""
+
+    pan: int
+    tilt: int
 
 
 @dataclass(frozen=True)
@@ -70,6 +80,31 @@ def parse_coordinates(arguments: str) -> Coordinates:
         raise CommandSyntaxError("both az= and el= are required")
 
     return Coordinates(azimuth=values["az"], elevation=values["el"])
+
+
+def parse_counter_values(arguments: str) -> CounterValues:
+    """Parse exactly one unsigned ``pan=`` and ``tilt=`` counter value."""
+
+    tokens = arguments.split()
+    if len(tokens) != 2:
+        raise CommandSyntaxError("expected: pan=<integer> tilt=<integer>")
+
+    values: dict[str, int] = {}
+    for token in tokens:
+        match = _COUNTER.fullmatch(token)
+        if match is None:
+            raise CommandSyntaxError("expected: pan=<integer> tilt=<integer>")
+        axis = match.group("axis")
+        if axis in values:
+            raise CommandSyntaxError(f"{axis}= may only be given once")
+        value = int(match.group("value"))
+        if value > _UINT32_MAX:
+            raise CommandSyntaxError(f"{axis} counter must not exceed {_UINT32_MAX}")
+        values[axis] = value
+
+    if values.keys() != {"pan", "tilt"}:
+        raise CommandSyntaxError("both pan= and tilt= are required")
+    return CounterValues(pan=values["pan"], tilt=values["tilt"])
 
 
 class TurntableSession:
@@ -184,6 +219,24 @@ class TurntableSession:
         except UnicodeEncodeError as exc:
             raise ValueError("raw command must contain only ASCII characters") from exc
         turntable.send_raw(payload)
+
+    def request_counters(self) -> None:
+        """Queue one encoder-counter query on the current connection."""
+
+        with self._lock:
+            turntable = self._turntable
+        if turntable is None:
+            raise NotConnectedError("not connected")
+        turntable.request_counters()
+
+    def set_counters(self, counters: CounterValues) -> None:
+        """Queue one encoder-counter update on the current connection."""
+
+        with self._lock:
+            turntable = self._turntable
+        if turntable is None:
+            raise NotConnectedError("not connected")
+        turntable.set_counters(pan=counters.pan, tilt=counters.tilt)
 
     def stop(self) -> None:
         """Immediately stop the connected turntable and cancel queued work."""
