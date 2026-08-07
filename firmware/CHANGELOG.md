@@ -90,3 +90,7 @@ Standardize everything on pan/tilt terminology
 ## 3.2.1 — 2026-08-07
 
 BUGFIX: Fix race condition when starting movement directly after previous move finishes
+
+## 3.2.2 — 2026-08-07
+
+Clean up code formatting in `firmware/Src/main.c`. No functional changes.
