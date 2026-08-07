@@ -67,3 +67,10 @@ Add firmware ACK/NAK response to all commands.
 ## 3.0.0 — 2026-08-07
 
 Firmware now outputs position in a format like `MSG:POS:PAN=123.456,TILT=-87.654;`
+
+## 3.1.0 — 2026-08-07
+
+Firmware can now detect and handle
+- MOV and SET commands that are out of bounds
+- Discontinuities in movements (generally caused by invalid counter wrapping)
+-
