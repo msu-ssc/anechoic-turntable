@@ -405,6 +405,24 @@ diagnostic/other events.
 Only a valid position report counts as live firmware communication. Arbitrary
 diagnostic output does not reset the controller's communication timeout.
 
+## Firmware-to-controller safety errors
+
+While movement is active, firmware compares each azimuth and elevation encoder
+counter with the value sampled during the previous main-loop iteration. A
+change of 240 counts or less on either axis is allowed. If either counter
+changes by more than 240 counts, firmware MUST immediately stop both motors,
+cancel the active move, and emit exactly:
+
+```text
+MSG:ERR:POSITION_DISCONTINUITY;\r\n
+```
+
+Successful SET and SET_CNT commands MUST reset the previous-counter baseline
+after changing the counters, so their intentional coordinate discontinuities
+do not produce this error. On receiving the error, the controller MUST send an
+immediate stop, invalidate its trusted position and pending work, and enter
+`ERROR`.
+
 ## Reporting cadence and discovery
 
 The exact position-report frequency is not fixed, but valid reports MUST arrive

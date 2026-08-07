@@ -28,6 +28,12 @@ commands return `MSG:NAK:<command>,<reason>;` followed by CRLF and fail safe.
 The single-byte emergency stop disables motion immediately and returns an
 `EMERGENCY_STOP` ACK without delaying the motor stop.
 
+While moving, firmware treats a change greater than `240` counts on either
+encoder between consecutive main-loop samples as a position discontinuity. It
+immediately stops both motors and emits
+`MSG:ERR:POSITION_DISCONTINUITY;` followed by CRLF. SET and SET_CNT reset the
+comparison baseline after their intentional counter changes.
+
 `CMD:MOV_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` converts the supplied
 counters to degrees using the configured zero counts and `240` counts per
 degree, then runs the existing degree-based movement logic. It is a diagnostic

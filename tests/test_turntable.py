@@ -172,6 +172,15 @@ def test_counter_response_becomes_a_typed_event():
     assert hash(event)
 
 
+def test_position_discontinuity_becomes_a_typed_error_event():
+    event = turntable2.parse_received_message(b"MSG:ERR:POSITION_DISCONTINUITY;\r\n")
+
+    assert isinstance(event, turntable2.ReceivedMessageError)
+    assert event.kind == "error"
+    assert event.reason == "POSITION_DISCONTINUITY"
+    assert hash(event)
+
+
 @pytest.mark.parametrize(
     ("message", "status", "command", "reason"),
     [
@@ -849,6 +858,29 @@ def test_matching_nak_fails_move_without_retry_and_stops_motion():
         assert "Firmware rejected MOV: REJECTED" in str(turntable.last_error())
         event = turntable.most_recent_event(kind="acknowledgement")
         assert event.status == "NAK"
+    finally:
+        turntable.close()
+
+
+def test_position_discontinuity_error_stops_and_invalidates_position():
+    fake = FakeSerial()
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(yaw=0, pitch=0)
+        turntable.set_position(pan=0, tilt=0)
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
+        writes_before_error = len(fake.writes)
+
+        fake.emit(b"MSG:ERR:POSITION_DISCONTINUITY;\r\n")
+        fake.emit_internal_position(yaw=5, pitch=0)
+
+        wait_for(lambda: turntable.current_state() == turntable2.TurntableState.ERROR)
+        assert fake.writes[writes_before_error:] == [b"p"] * 5
+        assert turntable.current_position() is not None
+        assert turntable.get_complete_state().has_been_set is False
+        assert "Firmware reported POSITION_DISCONTINUITY" in str(turntable.last_error())
+        event = turntable.most_recent_event(kind="error")
+        assert isinstance(event, turntable2.ReceivedMessageError)
     finally:
         turntable.close()
 

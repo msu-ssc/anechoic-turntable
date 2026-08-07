@@ -17,6 +17,7 @@ from typing import overload
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
+from anechoic_turntable.messages import ReceivedMessageError
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.positions import PanTilt
@@ -477,6 +478,9 @@ class ControllerThread(threading.Thread):
     def most_recent_event(self, *, kind: Literal["acknowledgement"]) -> ReceivedMessageAcknowledgement | None: ...
 
     @overload
+    def most_recent_event(self, *, kind: Literal["error"]) -> ReceivedMessageError | None: ...
+
+    @overload
     def most_recent_event(self, *, kind: Literal["other"]) -> ReceivedMessage | None: ...
 
     @overload
@@ -486,7 +490,7 @@ class ControllerThread(threading.Thread):
         with self._lock:
             if kind is None:
                 return self._events[-1] if self._events else None
-            if kind not in {"position", "version", "counter", "acknowledgement", "other"}:
+            if kind not in {"position", "version", "counter", "acknowledgement", "error", "other"}:
                 raise ValueError(f"Unknown event kind: {kind!r}")
             return self._most_recent_by_kind.get(kind)
 
@@ -559,6 +563,9 @@ class ControllerThread(threading.Thread):
         if isinstance(event, ReceivedMessageAcknowledgement):
             self._handle_acknowledgement(event)
             return
+        if isinstance(event, ReceivedMessageError):
+            self._handle_firmware_error(event)
+            return
         if not isinstance(event, ReceivedMessagePosition):
             return
         if event.yaw is None or event.pitch is None:
@@ -585,7 +592,8 @@ class ControllerThread(threading.Thread):
                     self._operation = None
                     self._state = TurntableState.MOVING if self._has_pending_commands() else TurntableState.STOPPED
             elif not isinstance(self._operation, _MoveOperation):
-                self._state = TurntableState.STOPPED if self._has_been_set else TurntableState.NOT_SET
+                if self._state != TurntableState.ERROR:
+                    self._state = TurntableState.STOPPED if self._has_been_set else TurntableState.NOT_SET
             else:
                 operation = self._operation
                 if _position_matches(
@@ -620,6 +628,18 @@ class ControllerThread(threading.Thread):
                     pending=pending,
                     uncertain=False,
                 )
+
+    def _handle_firmware_error(self, event: ReceivedMessageError) -> None:
+        with self._lock:
+            self._write_stop()
+            self._last_error = TurntableError(f"Firmware reported {event.reason}")
+            self._operation = None
+            self._invalidate_pending_commands()
+            self._set_requested = False
+            self._has_been_set = False
+            self._internal_position = None
+            self._corrected_position = None
+            self._state = TurntableState.ERROR
 
     def _record_event(self, event: ReceivedMessage) -> None:
         with self._lock:

@@ -33,6 +33,7 @@ from anechoic_turntable.controller import TurntableError
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
+from anechoic_turntable.messages import ReceivedMessageError
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.positions import PanTilt
@@ -47,7 +48,7 @@ from anechoic_turntable.session import parse_counter_values
 from anechoic_turntable.turntable import Turntable
 
 _COMMAND_HELP = "Commands: connect | disconnect | version | info | confirm | set pan=<number> tilt=<number> | mov pan=<number> tilt=<number> | set_cnt pan=<integer> tilt=<integer> | mov_cnt pan=<integer> tilt=<integer> | counter? | raw <ASCII bytes> | stop | help | exit"
-_MESSAGE_KINDS = ("position", "version", "counter", "acknowledgement", "other")
+_MESSAGE_KINDS = ("position", "version", "counter", "acknowledgement", "error", "other")
 
 
 class CommandInput(Input):
@@ -883,6 +884,8 @@ class TurntableTui(App[None]):
         if isinstance(event, ReceivedMessageAcknowledgement):
             reason = "" if event.reason is None else f" ({event.reason})"
             return f"{event.status.lower()}: {event.command}{reason}"
+        if isinstance(event, ReceivedMessageError):
+            return f"error: {event.reason}"
         text = event.message.decode("ascii", errors="backslashreplace").rstrip("\r\n")
         return f"other: {text}"
 

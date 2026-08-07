@@ -95,3 +95,17 @@ def test_firmware_acknowledges_accepted_and_rejected_commands() -> None:
     assert 'MYPROG_SendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");' in main_source
     assert "command_rejected = command_parsed" in main_source
     assert '? "OUT_OF_BOUNDS"' in main_source
+
+
+def test_firmware_stops_on_position_discontinuity() -> None:
+    """A moving counter jump greater than one degree fails safe."""
+
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+    global_variables = (REPOSITORY_ROOT / "firmware/Core/Inc/globalvars.h").read_text(encoding="utf-8")
+
+    assert "static const uint32_t MAX_POSITION_CHANGE_COUNTS = 240U;" in global_variables
+    assert "position_discontinuity_baseline_valid && move" in main_source
+    assert "change > maximum_change" in main_source
+    assert '"MSG:ERR:POSITION_DISCONTINUITY;\\r\\n"' in main_source
+    assert "previous_azimuth_counter = TIM2->CNT;" in main_source
+    assert "previous_elevation_counter = TIM1->CNT;" in main_source

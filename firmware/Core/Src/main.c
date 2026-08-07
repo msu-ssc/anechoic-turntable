@@ -97,7 +97,11 @@ volatile uint32_t unable_to_parse_frame_count = 0;
 // main loop to recognize and cancel a command copied before the stop.
 volatile uint32_t stop_generation = 0;
 volatile uint32_t emergency_stop_ack_count = 0;
+uint32_t previous_azimuth_counter = 0;
+uint32_t previous_elevation_counter = 0;
+bool position_discontinuity_baseline_valid = false;
 static const char firmware_version_message[] = "MSG:VERSION:" FIRMWARE_VERSION ";\r\n";
+static const char position_discontinuity_message[] = "MSG:ERR:POSITION_DISCONTINUITY;\r\n";
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
@@ -540,6 +544,12 @@ void MYPROG_SendAcknowledgement(const char *command, bool accepted, const char *
 	}
 }
 
+bool counter_change_exceeds(uint32_t current, uint32_t previous, uint32_t maximum_change)
+{
+	uint32_t change = current >= previous ? current - previous : previous - current;
+	return change > maximum_change;
+}
+
 void MYPROG_main_loop()
 {
 	float settimer1 =0;
@@ -553,6 +563,7 @@ void MYPROG_main_loop()
 	bool rejected_frame_available = false;
 	bool unable_to_parse_frame_available = false;
 	bool emergency_stop_ack_available = false;
+	bool position_discontinuity_detected = false;
 	// Snapshot used to detect an emergency stop received after the command was copied.
 	// Example: if this is 4 and stop_generation becomes 5, the copied command is cancelled.
 	uint32_t copied_stop_generation = 0;
@@ -561,6 +572,20 @@ void MYPROG_main_loop()
 
 	Az_pos = TIM2->CNT;
 	El_pos = TIM1->CNT;
+
+	if (position_discontinuity_baseline_valid && move &&
+		(counter_change_exceeds((uint32_t)Az_pos, previous_azimuth_counter, MAX_POSITION_CHANGE_COUNTS) ||
+		 counter_change_exceeds((uint32_t)El_pos, previous_elevation_counter, MAX_POSITION_CHANGE_COUNTS)))
+	{
+		move = 0;
+		mode = 0;
+		MYPROG_disable_az();
+		MYPROG_disable_el();
+		position_discontinuity_detected = true;
+	}
+	previous_azimuth_counter = (uint32_t)Az_pos;
+	previous_elevation_counter = (uint32_t)El_pos;
+	position_discontinuity_baseline_valid = true;
 
 	Az_pos_deg = (Az_pos - 43200)/240.0;
 	El_pos_deg = (El_pos - 21600)/240.0;
@@ -695,6 +720,9 @@ void MYPROG_main_loop()
 				TIM1->CNT = elevation_counter;
 				azimuth_counter = TIM2->CNT;
 				elevation_counter = TIM1->CNT;
+				previous_azimuth_counter = azimuth_counter;
+				previous_elevation_counter = elevation_counter;
+				position_discontinuity_baseline_valid = true;
 				send_counter_response = true;
 				break;
 			case COMMAND_MOV_CNT:
@@ -717,6 +745,9 @@ void MYPROG_main_loop()
 				mode = 0;
 				TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f));
 				TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f));
+				previous_azimuth_counter = TIM2->CNT;
+				previous_elevation_counter = TIM1->CNT;
+				position_discontinuity_baseline_valid = true;
 				break;
 			}
 			default:
@@ -762,6 +793,16 @@ void MYPROG_main_loop()
 				MYPROG_SendData(sendbuffer, command_message_length);
 			}
 		}
+	}
+
+	if (position_discontinuity_detected)
+	{
+		// A command received in the same loop must not restart motion after the fault.
+		move = 0;
+		mode = 0;
+		MYPROG_disable_az();
+		MYPROG_disable_el();
+		MYPROG_SendData(position_discontinuity_message, (int)sizeof(position_discontinuity_message) - 1);
 	}
 
 	int target_reached = move_az && move_el;
