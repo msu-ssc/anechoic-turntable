@@ -17,6 +17,7 @@ from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
+from anechoic_turntable.tui import CommandInput
 from anechoic_turntable.tui import TurntableTui
 
 
@@ -29,6 +30,7 @@ class FakeTurntable:
         self.abort_calls = 0
         self.raw_writes = []
         self.counter_requests = 0
+        self.version_requests = 0
         self.counter_sets = []
         self.counter_moves = []
         self.closed = False
@@ -61,6 +63,7 @@ class FakeTurntable:
             pending_acknowledgement_command=None,
             most_recent_acknowledgement=self.receive_events[-1],
             last_error=None,
+            has_been_set=True,
         )
 
     def get_complete_state(self):
@@ -86,6 +89,9 @@ class FakeTurntable:
 
     def request_counters(self):
         self.counter_requests += 1
+
+    def request_version(self):
+        self.version_requests += 1
 
     def set_counters(self, *, pan, tilt):
         self.counter_sets.append((pan, tilt))
@@ -128,11 +134,16 @@ def test_tui_connects_updates_state_and_queues_commands():
             app.refresh_controller_state()
 
             assert rendered_text(app.query_one("#connection", Static)) == "status: stopped    port: /dev/fake0"
+            assert str(app.query_one("#connect-toggle", Button).label) == "Disconnect"
+            assert rendered_text(app.query_one("#firmware-version", Static)) == "Firmware version: 1.2.3"
+            assert rendered_text(app.query_one("#state-status", Static)) == "STOPPED"
+            assert app.query_one("#state-status", Static).has_class("status-safe")
+            assert rendered_text(app.query_one("#position-status", Static)) == "SET"
             assert rendered_text(app.query_one("#azimuth", Static)) == "pan: 12.000°"
             assert rendered_text(app.query_one("#elevation", Static)) == "tilt: 5.000°"
             assert "PAN=6.000" in rendered_text(app.query_one("#serial-raw", Static))
-            assert "version: 1.2.3" not in rendered_text(app.query_one("#serial-parsed", Static))
-            assert "position: pan=6.0 tilt=-3.0" in rendered_text(app.query_one("#serial-parsed", Static))
+            assert "version: 1.2.3" in rendered_text(app.query_one("#serial-parsed", Static))
+            assert "position:" not in rendered_text(app.query_one("#serial-parsed", Static))
             assert rendered_text(app.query_one("#command-raw", Static)) == "b'CMD:VERSION;'"
             assert table.move_calls == [(-3.5, 4.0, None)]
             assert table.confirm_calls == 1
@@ -157,6 +168,52 @@ def test_tui_sends_raw_command_and_stop_command():
             assert table.abort_calls == 1
 
         assert table.abort_calls == 2
+
+    asyncio.run(exercise())
+
+
+def test_tui_requests_version_and_disconnects_with_the_toggle_button():
+    async def exercise():
+        table = FakeTurntable()
+        app = TurntableTui(connector=lambda: table, refresh_interval=60)
+
+        async with app.run_test(size=(140, 45)) as pilot:
+            submit(app, "connect")
+            submit(app, "version")
+
+            assert table.version_requests == 1
+
+            await pilot.click("#connect-toggle")
+            await pilot.pause()
+
+            assert table.abort_calls == 1
+            assert table.closed
+            assert str(app.query_one("#connect-toggle", Button).label) == "Connect"
+            assert rendered_text(app.query_one("#firmware-version", Static)) == "Firmware version: ?"
+
+    asyncio.run(exercise())
+
+
+def test_command_input_navigates_submitted_history_and_restores_draft():
+    async def exercise():
+        app = TurntableTui(refresh_interval=60)
+
+        async with app.run_test() as pilot:
+            command_input = app.query_one("#command", CommandInput)
+            command_input.value = "help"
+            await pilot.press("enter")
+            command_input.value = "info"
+            await pilot.press("enter")
+            command_input.value = "unfinished"
+
+            await pilot.press("up")
+            assert command_input.value == "info"
+            await pilot.press("up")
+            assert command_input.value == "help"
+            await pilot.press("down")
+            assert command_input.value == "info"
+            await pilot.press("down")
+            assert command_input.value == "unfinished"
 
     asyncio.run(exercise())
 
@@ -239,7 +296,15 @@ def test_tui_expands_data_panels_and_preserves_button_labels():
         async with app.run_test(size=(180, 50)):
             assert app.query_one("#streams").region.height >= 12
             assert app.query_one("#commands-panel").region.height >= 12
+            state_region = app.query_one("#state-panel").region
+            position_region = app.query_one("#position-panel").region
+            target_region = app.query_one("#target-panel").region
+            assert state_region.right == position_region.x
+            assert position_region.right == target_region.x
+            assert rendered_text(app.query_one("#state-status", Static)) == "DISCONNECTED"
+            assert rendered_text(app.query_one("#position-status", Static)) == "NOT SET"
             for selector, label in (
+                ("#connect-toggle", "Connect"),
                 ("#emergency-stop", "EMERGENCY STOP"),
                 ("#filter-parsed", "Filter"),
                 ("#move-submit", "Move"),
@@ -290,6 +355,14 @@ def test_tui_hides_timeout_error_when_next_move_begins():
             table.snapshot.activity = TurntableActivity.MOVING
             app.refresh_controller_state()
             assert "TimeoutError" not in rendered_text(app.query_one("#controller", Static))
+            assert app.query_one("#state-status", Static).has_class("status-active")
+
+            table.snapshot.state = TurntableState.NOT_SET
+            table.snapshot.activity = TurntableActivity.IDLE
+            table.snapshot.has_been_set = False
+            app.refresh_controller_state()
+            assert rendered_text(app.query_one("#position-status", Static)) == "NOT SET"
+            assert app.query_one("#position-status", Static).has_class("status-unset")
 
     asyncio.run(exercise())
 
@@ -318,9 +391,12 @@ def test_tui_move_set_and_filter_controls():
             assert table.confirm_calls == 1
 
             await pilot.click("#filter-parsed")
+            assert not app.screen.query_one("#filter-position", Checkbox).value
+            for kind in ("version", "counter", "acknowledgement", "other"):
+                assert app.screen.query_one(f"#filter-{kind}", Checkbox).value
             app.screen.query_one("#filter-position", Checkbox).value = False
             await pilot.click("#apply-filter")
-            assert rendered_text(app.query_one("#serial-parsed", Static)) == "other\nversion: 1.2.3\ncounter: pan=12345 tilt=5555\nack: CNT"
+            assert rendered_text(app.query_one("#serial-parsed", Static)) == ("other: diagnostic one\nversion: 1.2.3\ncounter: pan=12345 tilt=5555\nack: CNT")
 
         assert table.abort_calls == 1
 

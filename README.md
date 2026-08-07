@@ -36,7 +36,10 @@ the exact bytes written to the serial connection. Parsed ACK and NAK events and
 the latest or pending command acknowledgement are shown in the diagnostic
 streams and controller summary.
 
-The command field also accepts `connect`, `info`, `confirm`,
+The top panel includes a connect/disconnect button, prominent state and
+position-established indicators, and the latest firmware version reported by
+the device. The command field supports Up/Down history navigation and accepts
+`connect`, `disconnect`, `version`, `info`, `confirm`,
 `set pan=<number> tilt=<number>`, `mov pan=<number> tilt=<number>`,
 `set_cnt pan=<integer> tilt=<integer>`, `mov_cnt pan=<integer> tilt=<integer>`,
 `counter?`, `raw`, `stop`, `help`, and `exit`. The counter commands directly
@@ -44,8 +47,9 @@ set, move to, or query firmware encoder counters for diagnostics; setting
 counters clears the controller's trusted position. `stop` and the red
 emergency-stop button immediately cancel queued work and send the firmware stop
 byte five consecutive times. Controller-triggered safety stops use the same
-default count. `raw` sends its
-ASCII argument exactly once without protocol or coordinate validation; it is
+default count. `version` requests and displays the running firmware version.
+`raw` sends its ASCII argument exactly once without protocol or coordinate
+validation; it is
 for controlled firmware diagnostics only, and normal movement remains disabled
 until the position is set or confirmed again. Serial-port discovery runs in the
 background so the display remains responsive. Closing the TUI attempts a safe

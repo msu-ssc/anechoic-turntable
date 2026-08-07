@@ -12,6 +12,7 @@ from textual import on
 from textual import work
 from textual.app import App
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.containers import ScrollableContainer
 from textual.containers import Vertical
@@ -45,8 +46,60 @@ from anechoic_turntable.session import parse_coordinates
 from anechoic_turntable.session import parse_counter_values
 from anechoic_turntable.turntable import Turntable
 
-_COMMAND_HELP = "Commands: connect | info | confirm | set pan=<number> tilt=<number> | mov pan=<number> tilt=<number> | set_cnt pan=<integer> tilt=<integer> | mov_cnt pan=<integer> tilt=<integer> | counter? | raw <ASCII bytes> | stop | help | exit"
+_COMMAND_HELP = "Commands: connect | disconnect | version | info | confirm | set pan=<number> tilt=<number> | mov pan=<number> tilt=<number> | set_cnt pan=<integer> tilt=<integer> | mov_cnt pan=<integer> tilt=<integer> | counter? | raw <ASCII bytes> | stop | help | exit"
 _MESSAGE_KINDS = ("position", "version", "counter", "acknowledgement", "other")
+
+
+class CommandInput(Input):
+    """Single-line command input with shell-style history navigation."""
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        *Input.BINDINGS,
+        Binding("up", "history_previous", show=False),
+        Binding("down", "history_next", show=False),
+    ]
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._command_history: list[str] = []
+        self._history_index: int | None = None
+        self._draft = ""
+
+    def remember(self, command_line: str) -> None:
+        """Remember a submitted command and reset history navigation."""
+
+        self._command_history.append(command_line)
+        self._history_index = None
+        self._draft = ""
+
+    def action_history_previous(self) -> None:
+        """Replace the input with the previous submitted command."""
+
+        if not self._command_history:
+            return
+        if self._history_index is None:
+            self._draft = self.value
+            self._history_index = len(self._command_history) - 1
+        elif self._history_index > 0:
+            self._history_index -= 1
+        self._show_history_value(self._command_history[self._history_index])
+
+    def action_history_next(self) -> None:
+        """Replace the input with the next command or the saved draft."""
+
+        if self._history_index is None:
+            return
+        if self._history_index < len(self._command_history) - 1:
+            self._history_index += 1
+            value = self._command_history[self._history_index]
+        else:
+            self._history_index = None
+            value = self._draft
+        self._show_history_value(value)
+
+    def _show_history_value(self, value: str) -> None:
+        self.value = value
+        self.cursor_position = len(value)
 
 
 class _TurntableTuiSession(TurntableSession):
@@ -184,15 +237,53 @@ class TurntableTui(App[None]):
         min-width: 42;
     }
 
+    #state-panel {
+        width: 18;
+    }
+
     #position-panel, #target-panel {
         width: 20;
+    }
+
+    #controller-actions {
+        dock: right;
+        width: 30;
+        height: 3;
+    }
+
+    #connect-toggle {
+        width: 14;
+        min-width: 14;
+        height: 3;
     }
 
     #emergency-stop {
         width: 16;
         min-width: 16;
         height: 3;
-        dock: right;
+    }
+
+    .status-box {
+        height: 1;
+        content-align: center middle;
+        text-style: bold;
+    }
+
+    .status-neutral {
+        background: $primary;
+    }
+
+    .status-safe {
+        background: $success;
+    }
+
+    .status-active, .status-unset {
+        background: $warning;
+        color: $surface;
+    }
+
+    .status-error {
+        background: $error;
     }
 
     #streams {
@@ -291,17 +382,25 @@ class TurntableTui(App[None]):
             raise ValueError("refresh_interval must be greater than zero")
         self._session = _TurntableTuiSession(connector=connector)
         self._refresh_interval = refresh_interval
-        self._parsed_kinds = set(_MESSAGE_KINDS)
+        self._parsed_kinds = set(_MESSAGE_KINDS) - {"position"}
         self._timeout_error_hidden = False
+        self._firmware_version: str | None = None
 
     def compose(self) -> ComposeResult:
         with ScrollableContainer(id="body"):
             with Horizontal(id="summary"):
                 with Vertical(classes="panel", id="controller-panel"):
                     yield Label("Connection / Controller", classes="panel-title")
+                    with Horizontal(id="controller-actions"):
+                        yield Button("Connect", id="connect-toggle", variant="primary")
+                        yield Button("EMERGENCY STOP", id="emergency-stop", variant="error")
                     yield Static("status: disconnected    port: —", id="connection", markup=False)
+                    yield Static("Firmware version: ?", id="firmware-version", markup=False)
                     yield Static("activity: —\ncommunication: —", id="controller", markup=False)
-                    yield Button("EMERGENCY STOP", id="emergency-stop", variant="error")
+                with Vertical(classes="panel", id="state-panel"):
+                    yield Label("State", classes="panel-title")
+                    yield Static("DISCONNECTED", id="state-status", classes="status-box status-neutral", markup=False)
+                    yield Static("NOT SET", id="position-status", classes="status-box status-unset", markup=False)
                 with Vertical(classes="panel", id="position-panel"):
                     yield Label("Position", classes="panel-title")
                     yield Static("pan: —", id="azimuth", markup=False)
@@ -354,7 +453,7 @@ class TurntableTui(App[None]):
                     with Horizontal(classes="operation-actions"):
                         yield Button("Set", id="set-submit", variant="primary")
                         yield Button("Confirm", id="set-confirm")
-        yield Input(placeholder="command> raw CMD:VERSION;", id="command")
+        yield CommandInput(placeholder="command> version", id="command")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -381,6 +480,10 @@ class TurntableTui(App[None]):
         if event.input.id != "command":
             return
         command_line = event.value.strip()
+        if command_line:
+            command_input = event.input
+            if isinstance(command_input, CommandInput):
+                command_input.remember(command_line)
         event.input.clear()
         if command_line:
             self.execute_command(command_line)
@@ -395,7 +498,12 @@ class TurntableTui(App[None]):
         """Handle diagnostic and operation buttons."""
 
         button_id = event.button.id
-        if button_id == "emergency-stop":
+        if button_id == "connect-toggle":
+            if self._session.connected:
+                self._disconnect()
+            else:
+                self._begin_connection()
+        elif button_id == "emergency-stop":
             self._stop_turntable()
         elif button_id == "filter-parsed":
             self.push_screen(ParsedFilterModal(self._parsed_kinds), self._apply_parsed_filter)
@@ -417,8 +525,15 @@ class TurntableTui(App[None]):
         if command == "connect":
             if self._reject_arguments(command, arguments):
                 return
-            self._write_message("connecting...")
-            self._connect()
+            self._begin_connection()
+        elif command == "disconnect":
+            if self._reject_arguments(command, arguments):
+                return
+            self._disconnect()
+        elif command == "version":
+            if self._reject_arguments(command, arguments):
+                return
+            self._request_version()
         elif command == "info":
             if self._reject_arguments(command, arguments):
                 return
@@ -461,11 +576,15 @@ class TurntableTui(App[None]):
             snapshot = self._session.get_complete_state()
         except Exception as exc:  # noqa: BLE001 - keep diagnostics visible
             self.query_one("#connection", Static).update("status: unavailable    port: —")
+            self._update_status_indicators("unavailable", False)
             self.query_one("#controller", Static).update(f"activity: —\nerror: {exc}")
             return
 
         if snapshot is None:
             self.query_one("#connection", Static).update("status: disconnected    port: —")
+            self.query_one("#connect-toggle", Button).label = "Connect"
+            self.query_one("#firmware-version", Static).update("Firmware version: ?")
+            self._update_status_indicators("disconnected", False)
             self._update_position("azimuth", "elevation", None)
             self._update_position("target-azimuth", "target-elevation", None)
             self.query_one("#serial-raw", Static).update("—")
@@ -476,10 +595,13 @@ class TurntableTui(App[None]):
             return
 
         self.query_one("#connection", Static).update(f"status: {snapshot.state.value}    port: {self._session.port or '—'}")
+        self.query_one("#connect-toggle", Button).label = "Disconnect"
         self._update_position("azimuth", "elevation", snapshot.corrected_position)
         self._update_position("target-azimuth", "target-elevation", snapshot.target_position)
         self._update_receive_streams(self._session.events())
         self._update_command_raw(self._session.command_history())
+        self._update_status_indicators(snapshot.state.value, snapshot.has_been_set)
+        self.query_one("#firmware-version", Static).update(f"Firmware version: {self._firmware_version or '?'}")
 
         communication_age = snapshot.seconds_since_last_communication
         communication = "never" if math.isinf(communication_age) else f"{communication_age:.2f}s ago"
@@ -525,6 +647,24 @@ class TurntableTui(App[None]):
     def _connect(self) -> None:
         result = self._session.connect()
         self.call_from_thread(self._connection_finished, result)
+
+    def _begin_connection(self) -> None:
+        """Start background device discovery for a fresh connection."""
+
+        self._firmware_version = None
+        self.query_one("#connect-toggle", Button).label = "Connecting…"
+        self._write_message("connecting...")
+        self._connect()
+
+    def _disconnect(self) -> None:
+        warnings = self._session.close()
+        self._disconnection_finished(warnings)
+
+    def _disconnection_finished(self, warnings: tuple[str, ...]) -> None:
+        self._firmware_version = None
+        self._write_cleanup_warnings(warnings)
+        self._write_message("disconnected")
+        self.refresh_controller_state()
 
     def _connection_finished(self, result: ConnectionResult) -> None:
         self._write_cleanup_warnings(result.cleanup_warnings)
@@ -615,6 +755,15 @@ class TurntableTui(App[None]):
         self._write_message("counter query queued")
         self.refresh_controller_state()
 
+    def _request_version(self) -> None:
+        try:
+            self._session.request_version()
+        except (NotConnectedError, TurntableError) as exc:
+            self._write_message(f"error: {exc}")
+            return
+        self._write_message("version query queued")
+        self.refresh_controller_state()
+
     def _stop_turntable(self) -> None:
         try:
             self._session.stop()
@@ -679,6 +828,10 @@ class TurntableTui(App[None]):
         self.query_one(f"#{elevation_widget}", Static).update(f"tilt: {elevation}")
 
     def _update_receive_streams(self, events: tuple[ReceivedMessage, ...]) -> None:
+        for event in reversed(events):
+            if isinstance(event, ReceivedMessageVersion):
+                self._firmware_version = event.version
+                break
         recent_events = events[-5:]
         raw_lines = [self._format_bytes(event.message) for event in recent_events]
         filtered_events = [event for event in events if event.kind in self._parsed_kinds]
@@ -696,6 +849,25 @@ class TurntableTui(App[None]):
         self._parsed_kinds = selected_kinds
         self.refresh_controller_state()
 
+    def _update_status_indicators(self, state: str, has_been_set: bool) -> None:
+        state_class = "status-neutral"
+        if state == "stopped":
+            state_class = "status-safe"
+        elif state == "moving":
+            state_class = "status-active"
+        elif state in {"timed_out", "error", "no_communication"}:
+            state_class = "status-error"
+        self._set_status_box("state-status", state.replace("_", " ").upper(), state_class)
+        position_class = "status-safe" if has_been_set else "status-unset"
+        position_text = "SET" if has_been_set else "NOT SET"
+        self._set_status_box("position-status", position_text, position_class)
+
+    def _set_status_box(self, widget_id: str, text: str, status_class: str) -> None:
+        widget = self.query_one(f"#{widget_id}", Static)
+        widget.update(text)
+        widget.remove_class("status-neutral", "status-safe", "status-active", "status-unset", "status-error")
+        widget.add_class(status_class)
+
     @staticmethod
     def _format_bytes(message: bytes) -> str:
         return repr(message)
@@ -711,7 +883,8 @@ class TurntableTui(App[None]):
         if isinstance(event, ReceivedMessageAcknowledgement):
             reason = "" if event.reason is None else f" ({event.reason})"
             return f"{event.status.lower()}: {event.command}{reason}"
-        return "other"
+        text = event.message.decode("ascii", errors="backslashreplace").rstrip("\r\n")
+        return f"other: {text}"
 
 
 def main() -> None:

@@ -229,6 +229,15 @@ class TurntableSession:
             raise NotConnectedError("not connected")
         turntable.request_counters()
 
+    def request_version(self) -> None:
+        """Queue one firmware-version query on the current connection."""
+
+        with self._lock:
+            turntable = self._turntable
+        if turntable is None:
+            raise NotConnectedError("not connected")
+        turntable.request_version()
+
     def set_counters(self, counters: CounterValues) -> None:
         """Queue one encoder-counter update on the current connection."""
 
