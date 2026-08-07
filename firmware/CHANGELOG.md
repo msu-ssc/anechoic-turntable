@@ -74,3 +74,7 @@ Firmware can now detect and handle
 - MOV and SET commands that are out of bounds
 - Discontinuities in movements (generally caused by invalid counter wrapping)
 -
+
+## 3.1.1 — 2026-08-07
+
+Fixed the maximum and minimum values for the tilt.
