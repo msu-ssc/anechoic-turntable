@@ -29,7 +29,6 @@ from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.messages import parse_received_message
 from anechoic_turntable.positions import PanTilt
-from anechoic_turntable.positions import YawPitch
 from anechoic_turntable.serial_listener import SerialListener
 from anechoic_turntable.turntable import Turntable
 from anechoic_turntable.turntable import find
@@ -55,7 +54,6 @@ __all__ = [
     "TurntableCompleteState",
     "TurntableError",
     "TurntableState",
-    "YawPitch",
     "__version__",
     "find",
     "parse_received_message",

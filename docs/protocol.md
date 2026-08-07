@@ -23,7 +23,7 @@ This contract specifies:
 - command acknowledgement, retry, and completion behavior;
 - timeout and error expectations.
 
-For SET and MOV, the controller sends physical pan/tilt directly as yaw/pitch
+For SET and MOV, the controller sends physical pan/tilt directly as pan/tilt
 coordinates. MOV_CNT instead carries raw counter targets that firmware converts
 to degrees.
 
@@ -52,14 +52,14 @@ adapter before connection.
 
 The protocol carries raw firmware coordinates measured in degrees:
 
-- The `PAN` report field is called **yaw** inside the controller.
-- The `TILT` report field is called **pitch** inside the controller.
+- The first coordinate and the `PAN` report field are **pan**.
+- The second coordinate and the `TILT` report field are **tilt**.
 
 The controller's public API uses physical **pan** and **tilt**. The diagnostic
-shell exposes those values as `pan` and `tilt`. Pan and yaw are numerically equal,
-as are tilt and pitch.
+shell exposes those values as `pan` and `tilt`. Raw firmware coordinates are
+numerically equal to the corresponding physical coordinates.
 
-The firmware MUST treat command coordinates as yaw and pitch. Neither firmware
+The firmware MUST treat command coordinates as pan and tilt. Neither firmware
 nor controller applies tilt regimes or physical coordinate offsets.
 
 ## Numeric encoding
@@ -101,8 +101,8 @@ SET, MOV, MOV_CNT, SET_CNT, VERSION, and CNT are semicolon-terminated frames.
 They contain no spaces or newline:
 
 ```text
-CMD:SET:<yaw>,<pitch>;
-CMD:MOV:<yaw>,<pitch>;
+CMD:SET:<pan>,<tilt>;
+CMD:MOV:<pan>,<tilt>;
 CMD:MOV_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;
 CMD:SET_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;
 CMD:VERSION;
@@ -130,29 +130,29 @@ a partially parsed target.
 
 ### SET
 
-`CMD:SET` declares that the firmware's current raw position is the supplied yaw
-and pitch. It changes the coordinate reference without intentionally moving the
+`CMD:SET` declares that the firmware's current raw position is the supplied pan
+and tilt. It changes the coordinate reference without intentionally moving the
 motors.
 
 After applying SET, the firmware MUST continue emitting position reports. A
-report matching the requested raw yaw and pitch confirms completion.
+report matching the requested raw pan and tilt confirms completion.
 
 The controller accepts public SET values within:
 
-- pan/yaw: `[-180.0, 180.0]` degrees;
-- tilt/pitch: `[-90.0, 90.0]` degrees.
+- pan: `[-180.0, 180.0]` degrees;
+- tilt: `[-90.0, 90.0]` degrees.
 
 Firmware MUST reject an otherwise well-formed SET outside these inclusive
 bounds with `OUT_OF_BOUNDS` and MUST NOT change either counter.
 
 ### MOV
 
-`CMD:MOV` commands the firmware to move both axes toward the supplied raw yaw
-and pitch.
+`CMD:MOV` commands the firmware to move both axes toward the supplied raw pan
+and tilt.
 
 The firmware MUST:
 
-- interpret the first value as yaw/azimuth and the second as pitch/elevation;
+- interpret the first value as pan and the second as tilt;
 - continue emitting position reports while moving;
 - stop driving each axis when it is within `0.1` degrees of its target;
 - tolerate receiving the same MOV frame more than once.
@@ -165,7 +165,7 @@ The controller accepts physical move requests within:
 Firmware MUST reject an otherwise well-formed MOV outside these inclusive
 bounds with `OUT_OF_BOUNDS` and MUST NOT begin that movement.
 
-The controller sends those requested values directly as yaw and pitch. Firmware
+The controller sends those requested values directly as pan and tilt. Firmware
 used with this controller MUST represent the complete range without relying on
 controller-managed coordinate resets.
 
@@ -192,8 +192,8 @@ physical mechanism can safely reach.
 
 `CMD:SET_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` immediately stops both
 axes, cancels the active move, and writes the supplied raw encoder-counter
-values. The `PAN` field addresses the azimuth timer counter and `TILT`
-addresses the elevation timer counter. This diagnostic operation changes the
+values. The `PAN` field addresses the pan timer counter and `TILT`
+addresses the tilt timer counter. This diagnostic operation changes the
 firmware coordinate frame; after sending it, the controller MUST discard its
 trusted physical position and require SET or explicit position confirmation
 before a normal move.
@@ -369,7 +369,7 @@ Firmware MUST continuously emit CRLF-terminated position reports with this
 exact structure:
 
 ```text
-MSG:POS:PAN=<yaw>,TILT=<pitch>\r\n
+MSG:POS:PAN=<pan>,TILT=<tilt>\r\n
 ```
 
 Each number MUST:
@@ -398,7 +398,7 @@ diagnostic output does not reset the controller's communication timeout.
 
 ## Firmware-to-controller safety errors
 
-While movement is active, firmware compares each azimuth and elevation encoder
+While movement is active, firmware compares each pan and tilt encoder
 counter with the value sampled during the previous main-loop iteration. A
 change of 240 counts or less on either axis is allowed. If either counter
 changes by more than 240 counts, firmware MUST immediately stop both motors,
@@ -434,7 +434,7 @@ ACK confirms command acceptance, not physical completion. SET, MOV, and
 MOV_CNT completion continues to be inferred from position reports.
 
 The controller considers a raw target reached when both axes are within
-`0.11` degrees of the expected raw yaw and pitch.
+`0.11` degrees of the expected raw pan and tilt.
 
 If an operation deadline expires, the controller sends immediate stop, clears
 queued work, and enters its timed-out state.

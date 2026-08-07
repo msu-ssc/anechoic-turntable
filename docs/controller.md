@@ -19,7 +19,10 @@ with turntable2.find() as turntable:
         event = snapshot.most_recent_position_event
         position = snapshot.corrected_position
         if event is not None and position is not None:
-            print(f"{event.timestamp}, yaw={event.yaw}, pitch={event.pitch}, pan={position.pan}, tilt={position.tilt}")
+            print(
+                f"{event.timestamp}, raw_pan={event.pan}, raw_tilt={event.tilt}, "
+                f"pan={position.pan}, tilt={position.tilt}"
+            )
         time.sleep(0.5)
 
     print(f"Finished moving. Final position = {turntable.current_position()}")
@@ -69,7 +72,7 @@ safe.
 
 `set_position` and `move_to` queue work and return immediately. Commands are
 processed in order. `move_to` sends physical pan and tilt directly as firmware
-yaw and pitch. By default, its timeout is calculated when the queued move
+pan and tilt. By default, its timeout is calculated when the queued move
 starts, so earlier queued moves are reflected in the starting position.
 Every protocol command is written once, then the controller waits up to 0.25
 seconds for its matching ACK or NAK. A missing acknowledgement is retried up to
@@ -85,11 +88,11 @@ also send five consecutive stop bytes.
 
 `confirm_position()` is available when the firmware is already reporting a
 trusted position and sending SET would be undesirable. It adopts the current
-firmware yaw/pitch as physical pan/tilt and sends no command to the hardware.
+firmware pan/tilt as physical pan/tilt and sends no command to the hardware.
 
-Direct elevation commands require firmware configured with TIM1 encoder period
+Direct tilt commands require firmware configured with TIM1 encoder period
 `60000` and center count `30000`. Do not use this controller
-with the historical `14400`-period elevation firmware: a normal move outside
+with the historical `14400`-period tilt firmware: a normal move outside
 that firmware's narrow representable range can wrap the counter. The current
 firmware configuration provides rollover margin beyond the accepted move
 limits.
@@ -116,27 +119,26 @@ the empirical model and its limitations.
 
 ## Coordinate terminology
 
-`turntable2` retains separate names and types for the wire and public API:
+`turntable2` uses pan and tilt consistently for the wire and public API:
 
-- **Yaw and pitch** are the numbers maintained and reported by the
+- The raw **pan and tilt** values are maintained and reported by the
   turntable firmware. A SET command declares them as the requested coordinates
   (pan from -180° through 180° and tilt from -90° through 90°). Raw
-  `ReceivedMessagePosition` events therefore expose `yaw` and `pitch`.
-- **Pan and tilt** are physical angles. Public command arguments and
-  `current_position()` use `pan` and `tilt`.
+  `ReceivedMessagePosition` events therefore expose `pan` and `tilt`.
+- Physical **pan and tilt** are used by public command arguments and
+  `current_position()`.
 
-There is no coordinate offset or elevation-regime conversion: pan equals yaw
-and tilt equals pitch.
+There is no coordinate offset or tilt-regime conversion, so each raw value is
+numerically equal to its corresponding physical value.
 
-Firmware position reports label these values `PAN` and `TILT`; raw
-`ReceivedMessagePosition` events retain the internal `yaw` and `pitch` names.
+Firmware position reports label these values `PAN` and `TILT`.
 
 ## Complete diagnostic state
 
 `get_complete_state()` returns an immutable `TurntableCompleteState` captured
 under the controller lock. It includes:
 
-- `uncorrected_position`: the latest raw `YawPitch`;
+- `uncorrected_position`: the latest raw `PanTilt`;
 - `corrected_position`: the latest physical `PanTilt` (numerically equal to the
   raw position);
 - `most_recent_position_event`, `most_recent_event`, and the five
@@ -178,12 +180,12 @@ Exact ACK and NAK frames become `ReceivedMessageAcknowledgement` events.
 The exact `MSG:ERR:POSITION_DISCONTINUITY;` safety report becomes a
 `ReceivedMessageError` event. The controller responds by sending an immediate
 stop, invalidating pending work and its trusted position, and entering `ERROR`.
-These events intentionally preserve raw firmware yaw and pitch. Use
+These events intentionally preserve raw firmware pan and tilt. Use
 `current_position()` or `get_complete_state().corrected_position` for physical
 pan and tilt.
 
 `position_history()` returns bounded `PositionSample` records containing the
-raw `YawPitch` and corrected `PanTilt` observed at each position-event
+raw `PanTilt` and corrected `PanTilt` observed at each position-event
 timestamp. The web monitor uses these paired samples so its two coordinate
 plots always describe the same observations.
 

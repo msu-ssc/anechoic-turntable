@@ -6,16 +6,8 @@ import dataclasses
 
 
 @dataclasses.dataclass(frozen=True)
-class YawPitch:
-    """The turntable firmware's relative, internal position in degrees."""
-
-    yaw: float
-    pitch: float
-
-
-@dataclasses.dataclass(frozen=True)
 class PanTilt:
-    """The physical position in degrees."""
+    """A turntable position in degrees."""
 
     pan: float
     tilt: float

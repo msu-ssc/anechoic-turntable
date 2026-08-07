@@ -21,7 +21,6 @@ from anechoic_turntable.messages import ReceivedMessageError
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.positions import PanTilt
-from anechoic_turntable.positions import YawPitch
 from anechoic_turntable.serial_listener import SerialConnection
 
 ALLOWABLE_DISCREPANCY_DEG = 0.11
@@ -69,7 +68,7 @@ class PositionSample:
     """One firmware and physical position observed at the same time."""
 
     timestamp: datetime.datetime
-    internal_position: YawPitch
+    internal_position: PanTilt
     corrected_position: PanTilt
 
 
@@ -89,7 +88,7 @@ class TurntableCompleteState:
     state: TurntableState
     activity: TurntableActivity
     activity_phase: str | None
-    uncorrected_position: YawPitch | None
+    uncorrected_position: PanTilt | None
     corrected_position: PanTilt | None
     most_recent_position_event: ReceivedMessagePosition | None
     most_recent_event: ReceivedMessage | None
@@ -100,7 +99,7 @@ class TurntableCompleteState:
     communication_timeout: float
     activity_timeout_at: datetime.datetime | None
     target_position: PanTilt | None
-    internal_target: YawPitch | None
+    internal_target: PanTilt | None
     queued_command_count: int
     pending_acknowledgement_command: str | None
     has_been_set: bool
@@ -175,7 +174,7 @@ class _MoveOperation:
     tilt: float
     deadline: float
     timeout_at: datetime.datetime
-    internal_target: YawPitch
+    internal_target: PanTilt
     phase: Literal["direct", "counter"]
 
 
@@ -238,7 +237,7 @@ class ControllerThread(threading.Thread):
         self._state = TurntableState.NOT_SET
         self._has_been_set = False
         self._set_requested = False
-        self._internal_position: YawPitch | None = None
+        self._internal_position: PanTilt | None = None
         self._corrected_position: PanTilt | None = None
         self._most_recent_communication = float("-inf")
         self._last_communication_at: datetime.datetime | None = None
@@ -284,8 +283,8 @@ class ControllerThread(threading.Thread):
             self._has_been_set = True
             self._set_requested = False
             self._corrected_position = PanTilt(
-                pan=self._internal_position.yaw,
-                tilt=self._internal_position.pitch,
+                pan=self._internal_position.pan,
+                tilt=self._internal_position.tilt,
             )
             self._state = TurntableState.STOPPED
 
@@ -415,14 +414,14 @@ class ControllerThread(threading.Thread):
 
             timeout_at: datetime.datetime | None = None
             target_position: PanTilt | None = None
-            internal_target: YawPitch | None = None
+            internal_target: PanTilt | None = None
             activity_phase: str | None = None
             if isinstance(operation, _SetOperation):
                 activity = TurntableActivity.SETTING_POSITION
                 activity_phase = "set"
                 timeout_at = operation.timeout_at
                 target_position = PanTilt(operation.pan, operation.tilt)
-                internal_target = YawPitch(operation.pan, operation.tilt)
+                internal_target = PanTilt(operation.pan, operation.tilt)
             elif isinstance(operation, _MoveOperation):
                 activity = TurntableActivity.MOVING
                 activity_phase = operation.phase
@@ -568,24 +567,24 @@ class ControllerThread(threading.Thread):
             return
         if not isinstance(event, ReceivedMessagePosition):
             return
-        if event.yaw is None or event.pitch is None:
+        if event.pan is None or event.tilt is None:
             return
 
-        internal_position = YawPitch(yaw=event.yaw, pitch=event.pitch)
+        internal_position = PanTilt(pan=event.pan, tilt=event.tilt)
         with self._lock:
             self._most_recent_communication = time.monotonic()
             self._last_communication_at = event.timestamp
             self._internal_position = internal_position
             self._corrected_position = PanTilt(
-                pan=internal_position.yaw,
-                tilt=internal_position.pitch,
+                pan=internal_position.pan,
+                tilt=internal_position.tilt,
             )
 
             if isinstance(self._operation, _SetOperation):
                 operation = self._operation
                 if _position_matches(
                     internal_position,
-                    YawPitch(operation.pan, operation.tilt),
+                    PanTilt(operation.pan, operation.tilt),
                 ):
                     self._has_been_set = True
                     self._set_requested = any(isinstance(command, _SetCommand) for command in self._queued_commands)
@@ -766,7 +765,7 @@ class ControllerThread(threading.Thread):
             )
             self._state = TurntableState.NOT_SET
             self._write_acknowledged_command(
-                _format_set_command(yaw=command.pan, pitch=command.tilt),
+                _format_set_command(pan=command.pan, tilt=command.tilt),
                 command="SET",
                 invalidates_position_on_uncertainty=True,
             )
@@ -797,13 +796,13 @@ class ControllerThread(threading.Thread):
                 tilt=command.tilt,
                 deadline=deadline,
                 timeout_at=timeout_at,
-                internal_target=YawPitch(yaw=command.pan, pitch=command.tilt),
+                internal_target=PanTilt(pan=command.pan, tilt=command.tilt),
                 phase="direct",
             )
             self._operation = operation
             self._state = TurntableState.MOVING
             self._write_acknowledged_command(
-                _format_move_command(yaw=command.pan, pitch=command.tilt),
+                _format_move_command(pan=command.pan, tilt=command.tilt),
                 command="MOV",
                 stop_on_failure=True,
             )
@@ -812,11 +811,11 @@ class ControllerThread(threading.Thread):
         with self._lock:
             if command.generation != self._command_generation:
                 return
-            target = _counter_target_to_yaw_pitch(pan=command.pan, tilt=command.tilt)
+            target = _counter_target_to_pan_tilt(pan=command.pan, tilt=command.tilt)
             deadline, timeout_at = _make_deadline(command.timeout)
             self._operation = _MoveOperation(
-                pan=target.yaw,
-                tilt=target.pitch,
+                pan=target.pan,
+                tilt=target.tilt,
                 deadline=deadline,
                 timeout_at=timeout_at,
                 internal_target=target,
@@ -938,12 +937,12 @@ def _validate_position(*, pan: float, tilt: float) -> None:
         raise ValueError(f"tilt must be within {ABSOLUTE_TILT_BOUNDS}")
 
 
-def _counter_target_to_yaw_pitch(*, pan: int, tilt: int) -> YawPitch:
+def _counter_target_to_pan_tilt(*, pan: int, tilt: int) -> PanTilt:
     """Convert raw counter targets exactly as the firmware does."""
 
-    return YawPitch(
-        yaw=(pan - PAN_ZERO_COUNTER) / COUNTS_PER_DEGREE,
-        pitch=(tilt - TILT_ZERO_COUNTER) / COUNTS_PER_DEGREE,
+    return PanTilt(
+        pan=(pan - PAN_ZERO_COUNTER) / COUNTS_PER_DEGREE,
+        tilt=(tilt - TILT_ZERO_COUNTER) / COUNTS_PER_DEGREE,
     )
 
 
@@ -976,20 +975,20 @@ def _estimate_axis_time(angle: float, *, axis: Literal["pan", "tilt"]) -> float:
     raise ValueError(f"Invalid axis: {axis!r}. Must be 'pan' or 'tilt'.")
 
 
-def _position_matches(actual: YawPitch, expected: YawPitch) -> bool:
-    return abs(actual.yaw - expected.yaw) <= ALLOWABLE_DISCREPANCY_DEG and abs(actual.pitch - expected.pitch) <= ALLOWABLE_DISCREPANCY_DEG
+def _position_matches(actual: PanTilt, expected: PanTilt) -> bool:
+    return abs(actual.pan - expected.pan) <= ALLOWABLE_DISCREPANCY_DEG and abs(actual.tilt - expected.tilt) <= ALLOWABLE_DISCREPANCY_DEG
 
 
-def _format_set_command(*, yaw: float, pitch: float) -> bytes:
-    """Format the firmware's fixed SET azimuth/elevation value slots."""
+def _format_set_command(*, pan: float, tilt: float) -> bytes:
+    """Format the firmware's fixed SET pan/tilt value slots."""
 
-    return f"CMD:SET:{_wire_number(yaw)},{_wire_number(pitch)};".encode("ascii")
+    return f"CMD:SET:{_wire_number(pan)},{_wire_number(tilt)};".encode("ascii")
 
 
-def _format_move_command(*, yaw: float, pitch: float) -> bytes:
-    """Format the firmware's fixed MOV azimuth/elevation value slots."""
+def _format_move_command(*, pan: float, tilt: float) -> bytes:
+    """Format the firmware's fixed MOV pan/tilt value slots."""
 
-    return f"CMD:MOV:{_wire_number(yaw)},{_wire_number(pitch)};".encode("ascii")
+    return f"CMD:MOV:{_wire_number(pan)},{_wire_number(tilt)};".encode("ascii")
 
 
 def _wire_number(value: float) -> str:

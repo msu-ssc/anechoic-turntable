@@ -56,29 +56,29 @@ UART_HandleTypeDef huart1;
 
 void MYPROG_motor_control_loop();
 void MYPROG_move_axis(int axis, int speed, int dir);
-void MYPROG_disable_az();
-void MYPROG_disable_el();
+void MYPROG_disable_pan();
+void MYPROG_disable_tilt();
 
 //global vars
-int Az_pos;
-int El_pos;
+int Pan_pos;
+int Tilt_pos;
 
 
-float Az_pos_deg;
-float El_pos_deg;
+float Pan_pos_deg;
+float Tilt_pos_deg;
 
-int Az_speed =128;
-int El_speed = 128;
+int Pan_speed =128;
+int Tilt_speed = 128;
 
-float Azc =0;
-float Elc =0;
+float Pan_command =0;
+float Tilt_command =0;
 
-float command_position_AZ=0;
-float command_position_EL=0;
+float command_position_PAN=0;
+float command_position_TILT=0;
 
 int move = 0;
-int move_az =0;
-int move_el = 0;
+int move_pan =0;
+int move_tilt = 0;
 
 int mode =0;  // 0 is auto, 1 is manual
 
@@ -97,13 +97,13 @@ volatile uint32_t unable_to_parse_frame_count = 0;
 // main loop to recognize and cancel a command copied before the stop.
 volatile uint32_t stop_generation = 0;
 volatile uint32_t emergency_stop_ack_count = 0;
-uint32_t previous_azimuth_counter = 0;
-uint32_t previous_elevation_counter = 0;
+uint32_t previous_pan_counter = 0;
+uint32_t previous_tilt_counter = 0;
 bool position_discontinuity_baseline_valid = false;
-uint32_t azimuthZeroDegreeCounter = 50000;
-uint32_t elevationZeroDegreeCounter = 30000;
-float azimuthCountsPerDegree = 240.0f;
-float elevationCountsPerDegree = 240.0f;
+uint32_t panZeroDegreeCounter = 50000;
+uint32_t tiltZeroDegreeCounter = 30000;
+float panCountsPerDegree = 240.0f;
+float tiltCountsPerDegree = 240.0f;
 static const char firmware_version_message[] = "MSG:VERSION:" FIRMWARE_VERSION ";\r\n";
 static const char position_discontinuity_message[] = "MSG:ERR:POSITION_DISCONTINUITY;\r\n";
 
@@ -157,8 +157,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	  move = 0;
 	  mode = 0;
 	  buff =0;
-	  MYPROG_disable_az();
-	  MYPROG_disable_el();
+	  MYPROG_disable_pan();
+	  MYPROG_disable_tilt();
 
 	  // Example: after "CMD:MOV:10.000p", the bytes before p must not be reused.
 	  buffn = 0;
@@ -303,48 +303,48 @@ int parse_counter_number(const char *text, uint32_t *parsed_value)
 // Parse both coordinates from one complete command string.
 // expected_prefix distinguishes commands such as "CMD:MOV:" and "CMD:SET:".
 // Example input: "CMD:MOV:15.000,-40.000" (the receive callback removed the semicolon).
-bool parse_command_coordinates(const char *input, const char *expected_prefix, float *yaw, float *pitch) {
+bool parse_command_coordinates(const char *input, const char *expected_prefix, float *pan, float *tilt) {
     size_t prefix_length = strlen(expected_prefix);
     // The prefix must appear at the very beginning of the command.
     if (strncmp(input, expected_prefix, prefix_length) != 0) {
         return false;
     }
 
-    // Skip the prefix, parse yaw, and require a comma immediately afterward.
+    // Skip the prefix, parse pan, and require a comma immediately afterward.
     const char *coordinate_text = input + prefix_length;
-    float parsed_yaw = 0.0f;
-    int yaw_length = parse_wire_number(coordinate_text, &parsed_yaw);
-    if (yaw_length < 0 || coordinate_text[yaw_length] != ',') {
+    float parsed_pan = 0.0f;
+    int pan_length = parse_wire_number(coordinate_text, &parsed_pan);
+    if (pan_length < 0 || coordinate_text[pan_length] != ',') {
         return false;
     }
 
-    // Pitch begins after the comma and must consume the rest of the command.
-    const char *pitch_text = coordinate_text + yaw_length + 1;
-    float parsed_pitch = 0.0f;
-    int pitch_length = parse_wire_number(pitch_text, &parsed_pitch);
-    if (pitch_length < 0 || pitch_text[pitch_length] != '\0') {
+    // Tilt begins after the comma and must consume the rest of the command.
+    const char *tilt_text = coordinate_text + pan_length + 1;
+    float parsed_tilt = 0.0f;
+    int tilt_length = parse_wire_number(tilt_text, &parsed_tilt);
+    if (tilt_length < 0 || tilt_text[tilt_length] != '\0') {
         return false;
     }
 
     // Do not expose partially parsed coordinates when any part of the command is invalid.
-    *yaw = parsed_yaw;
-    *pitch = parsed_pitch;
+    *pan = parsed_pan;
+    *tilt = parsed_tilt;
     return true;
 }
 
-bool parse_mov_command(const char *input, float *yaw, float *pitch) {
-    return parse_command_coordinates(input, "CMD:MOV:", yaw, pitch);
+bool parse_mov_command(const char *input, float *pan, float *tilt) {
+    return parse_command_coordinates(input, "CMD:MOV:", pan, tilt);
 }
 
-bool parse_set_command(const char *input, float *yaw, float *pitch) {
-    return parse_command_coordinates(input, "CMD:SET:", yaw, pitch);
+bool parse_set_command(const char *input, float *pan, float *tilt) {
+    return parse_command_coordinates(input, "CMD:SET:", pan, tilt);
 }
 
 bool parse_counter_command(
     const char *input,
     const char *expected_prefix,
-    uint32_t *azimuth_counter,
-    uint32_t *elevation_counter
+    uint32_t *pan_counter,
+    uint32_t *tilt_counter
 )
 {
     static const char expected_separator[] = ",TILT=";
@@ -362,39 +362,39 @@ bool parse_counter_command(
     const char *counter_text =
         input + prefix_length;
 
-    uint32_t parsed_azimuth = 0;
+    uint32_t parsed_pan = 0;
 
-    int azimuth_length = parse_counter_number(
+    int pan_length = parse_counter_number(
         counter_text,
-        &parsed_azimuth
+        &parsed_pan
     );
 
-    if (azimuth_length < 0 ||
+    if (pan_length < 0 ||
         strncmp(
-            counter_text + azimuth_length,
+            counter_text + pan_length,
             expected_separator,
             sizeof(expected_separator) - 1U
         ) != 0) {
         return false;
     }
 
-    const char *elevation_text =
-        counter_text + azimuth_length + sizeof(expected_separator) - 1U;
+    const char *tilt_text =
+        counter_text + pan_length + sizeof(expected_separator) - 1U;
 
-    uint32_t parsed_elevation = 0;
+    uint32_t parsed_tilt = 0;
 
-    int elevation_length = parse_counter_number(
-        elevation_text,
-        &parsed_elevation
+    int tilt_length = parse_counter_number(
+        tilt_text,
+        &parsed_tilt
     );
 
-    if (elevation_length < 0 ||
-        elevation_text[elevation_length] != '\0') {
+    if (tilt_length < 0 ||
+        tilt_text[tilt_length] != '\0') {
         return false;
     }
 
-    *azimuth_counter = parsed_azimuth;
-    *elevation_counter = parsed_elevation;
+    *pan_counter = parsed_pan;
+    *tilt_counter = parsed_tilt;
 
     return true;
 }
@@ -490,32 +490,32 @@ void MYPROG_Delay(int milliseconds)
 	HAL_Delay(milliseconds);
 }
 
-void MYPROG_enable_az()
+void MYPROG_enable_pan()
 {
 	HAL_GPIO_WritePin(GPIOE, ENABLE_A_Pin, GPIO_PIN_SET);
 }
 
-void MYPROG_disable_az()
+void MYPROG_disable_pan()
 {
 	HAL_GPIO_WritePin(GPIOE, ENABLE_A_Pin, GPIO_PIN_RESET);
 	TIM3->CCR1 = 0;
 	TIM3->CCR2 = 0;
-	move_az = 0;
+	move_pan = 0;
 }
 
-void MYPROG_enable_el()
+void MYPROG_enable_tilt()
 {
 	HAL_GPIO_WritePin(GPIOE, ENABLE_E_Pin, GPIO_PIN_SET);
 	HAL_GPIO_WritePin(GPIOB, ENABLE_EE_Pin, GPIO_PIN_SET);
 }
 
-void MYPROG_disable_el()
+void MYPROG_disable_tilt()
 {
 	HAL_GPIO_WritePin(GPIOE, ENABLE_E_Pin, GPIO_PIN_RESET);
 	HAL_GPIO_WritePin(GPIOB, ENABLE_EE_Pin, GPIO_PIN_RESET);
 	TIM3->CCR4 = 0;
 	TIM3->CCR3 = 0;
-	move_el = 0;
+	move_tilt = 0;
 }
 
 void MYPROG_SendData(const char * data, int size)
@@ -554,24 +554,24 @@ bool counter_change_exceeds(uint32_t current, uint32_t previous, uint32_t maximu
 	return change > maximum_change;
 }
 
-float azimuthCounterToDegrees(uint32_t counter)
+float panCounterToDegrees(uint32_t counter)
 {
-	return ((float)counter - (float)azimuthZeroDegreeCounter) / azimuthCountsPerDegree;
+	return ((float)counter - (float)panZeroDegreeCounter) / panCountsPerDegree;
 }
 
-uint32_t azimuthDegreesToCounter(float degrees)
+uint32_t panDegreesToCounter(float degrees)
 {
-	return (uint32_t)((float)azimuthZeroDegreeCounter + (degrees * azimuthCountsPerDegree));
+	return (uint32_t)((float)panZeroDegreeCounter + (degrees * panCountsPerDegree));
 }
 
-float elevationCounterToDegrees(uint32_t counter)
+float tiltCounterToDegrees(uint32_t counter)
 {
-	return ((float)counter - (float)elevationZeroDegreeCounter) / elevationCountsPerDegree;
+	return ((float)counter - (float)tiltZeroDegreeCounter) / tiltCountsPerDegree;
 }
 
-uint32_t elevationDegreesToCounter(float degrees)
+uint32_t tiltDegreesToCounter(float degrees)
 {
-	return (uint32_t)((float)elevationZeroDegreeCounter + (degrees * elevationCountsPerDegree));
+	return (uint32_t)((float)tiltZeroDegreeCounter + (degrees * tiltCountsPerDegree));
 }
 
 void MYPROG_main_loop()
@@ -594,25 +594,25 @@ void MYPROG_main_loop()
 
 
 
-	Az_pos = TIM2->CNT;
-	El_pos = TIM1->CNT;
+	Pan_pos = TIM2->CNT;
+	Tilt_pos = TIM1->CNT;
 
 	if (position_discontinuity_baseline_valid && move &&
-		(counter_change_exceeds((uint32_t)Az_pos, previous_azimuth_counter, MAX_POSITION_CHANGE_COUNTS) ||
-		 counter_change_exceeds((uint32_t)El_pos, previous_elevation_counter, MAX_POSITION_CHANGE_COUNTS)))
+		(counter_change_exceeds((uint32_t)Pan_pos, previous_pan_counter, MAX_POSITION_CHANGE_COUNTS) ||
+		 counter_change_exceeds((uint32_t)Tilt_pos, previous_tilt_counter, MAX_POSITION_CHANGE_COUNTS)))
 	{
 		move = 0;
 		mode = 0;
-		MYPROG_disable_az();
-		MYPROG_disable_el();
+		MYPROG_disable_pan();
+		MYPROG_disable_tilt();
 		position_discontinuity_detected = true;
 	}
-	previous_azimuth_counter = (uint32_t)Az_pos;
-	previous_elevation_counter = (uint32_t)El_pos;
+	previous_pan_counter = (uint32_t)Pan_pos;
+	previous_tilt_counter = (uint32_t)Tilt_pos;
 	position_discontinuity_baseline_valid = true;
 
-	Az_pos_deg = azimuthCounterToDegrees((uint32_t)Az_pos);
-	El_pos_deg = elevationCounterToDegrees((uint32_t)El_pos);
+	Pan_pos_deg = panCounterToDegrees((uint32_t)Pan_pos);
+	Tilt_pos_deg = tiltCounterToDegrees((uint32_t)Tilt_pos);
 
 	MYPROG_Delay(5);
 	//MYPROG_SendData("ACK\n",3);
@@ -670,20 +670,20 @@ void MYPROG_main_loop()
 	{
 		//MYPROG_SendData("read command",10);
 		// Keep parsed movement coordinates local until the complete command can be applied safely.
-		float move_yaw = 0.0f;
-		float move_pitch = 0.0f;
-    uint32_t azimuth_counter = 0;
-    uint32_t elevation_counter = 0;
+		float move_pan = 0.0f;
+		float move_tilt = 0.0f;
+    uint32_t pan_counter = 0;
+    uint32_t tilt_counter = 0;
 		command_type_t command_type = identify_command_type(command_to_process);
 		bool command_parsed = false;
 		bool command_rejected = false;
 		switch (command_type)
 		{
 		case COMMAND_MOV:
-			command_parsed = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
+			command_parsed = parse_mov_command(command_to_process, &move_pan, &move_tilt);
 			command_rejected = command_parsed &&
-				(move_yaw < MIN_PAN_DEG || move_yaw > MAX_PAN_DEG ||
-				 move_pitch < MIN_TILT_DEG || move_pitch > MAX_TILT_DEG);
+				(move_pan < MIN_PAN_DEG || move_pan > MAX_PAN_DEG ||
+				 move_tilt < MIN_TILT_DEG || move_tilt > MAX_TILT_DEG);
 			break;
 		case COMMAND_SET:
 			command_parsed = parse_set_command(command_to_process, &settimer1, &settimer2);
@@ -699,11 +699,11 @@ void MYPROG_main_loop()
 			break;
 		case COMMAND_MOV_CNT:
 			command_parsed = parse_counter_command(command_to_process, "CMD:MOV_CNT:PAN=",
-				&azimuth_counter, &elevation_counter);
+				&pan_counter, &tilt_counter);
 			break;
 		case COMMAND_SET_CNT:
 			command_parsed = parse_counter_command(command_to_process, "CMD:SET_CNT:PAN=",
-				&azimuth_counter, &elevation_counter);
+				&pan_counter, &tilt_counter);
 			break;
 		default:
 			break;
@@ -723,54 +723,54 @@ void MYPROG_main_loop()
 		{
 			move = 0;
 			mode = 0;
-			MYPROG_disable_az();
-			MYPROG_disable_el();
+			MYPROG_disable_pan();
+			MYPROG_disable_tilt();
 		}
 		else
 		{
 			switch (command_type)
 			{
 			case COMMAND_CNT:
-				azimuth_counter = TIM2->CNT;
-				elevation_counter = TIM1->CNT;
+				pan_counter = TIM2->CNT;
+				tilt_counter = TIM1->CNT;
 				send_counter_response = true;
 				break;
 			case COMMAND_SET_CNT:
 				move = 0;
 				mode = 0;
-				MYPROG_disable_az();
-				MYPROG_disable_el();
-				TIM2->CNT = azimuth_counter;
-				TIM1->CNT = elevation_counter;
-				azimuth_counter = TIM2->CNT;
-				elevation_counter = TIM1->CNT;
-				previous_azimuth_counter = azimuth_counter;
-				previous_elevation_counter = elevation_counter;
+				MYPROG_disable_pan();
+				MYPROG_disable_tilt();
+				TIM2->CNT = pan_counter;
+				TIM1->CNT = tilt_counter;
+				pan_counter = TIM2->CNT;
+				tilt_counter = TIM1->CNT;
+				previous_pan_counter = pan_counter;
+				previous_tilt_counter = tilt_counter;
 				position_discontinuity_baseline_valid = true;
 				send_counter_response = true;
 				break;
 			case COMMAND_MOV_CNT:
-				move_yaw = azimuthCounterToDegrees(azimuth_counter);
-				move_pitch = elevationCounterToDegrees(elevation_counter);
+				move_pan = panCounterToDegrees(pan_counter);
+				move_tilt = tiltCounterToDegrees(tilt_counter);
 				/* fall through */
 			case COMMAND_MOV:
-				Azc = move_yaw;
-				Elc = move_pitch;
+				Pan_command = move_pan;
+				Tilt_command = move_tilt;
 				move = 1;
 				mode = 0;
-				command_position_AZ = Azc;
-				command_position_EL = Elc;
-				Az_speed = 255;
-				El_speed = 255;
+				command_position_PAN = Pan_command;
+				command_position_TILT = Tilt_command;
+				Pan_speed = 255;
+				Tilt_speed = 255;
 				break;
 			case COMMAND_SET:
 			{
 				move = 0;
 				mode = 0;
-				TIM1->CNT = elevationDegreesToCounter(settimer2);
-				TIM2->CNT = azimuthDegreesToCounter(settimer1);
-				previous_azimuth_counter = TIM2->CNT;
-				previous_elevation_counter = TIM1->CNT;
+				TIM1->CNT = tiltDegreesToCounter(settimer2);
+				TIM2->CNT = panDegreesToCounter(settimer1);
+				previous_pan_counter = TIM2->CNT;
+				previous_tilt_counter = TIM1->CNT;
 				position_discontinuity_baseline_valid = true;
 				break;
 			}
@@ -797,7 +797,7 @@ void MYPROG_main_loop()
 		{
 			int counter_message_length = snprintf(sendbuffer, sizeof(sendbuffer),
 				"MSG:CNT:PAN=%lu,TILT=%lu;\r\n",
-				(unsigned long)azimuth_counter,(unsigned long)elevation_counter);
+				(unsigned long)pan_counter,(unsigned long)tilt_counter);
 			if (counter_message_length > 0 && counter_message_length < (int)sizeof(sendbuffer))
 			{
 				MYPROG_SendData(sendbuffer, counter_message_length);
@@ -810,7 +810,7 @@ void MYPROG_main_loop()
 		else if (command_accepted && (command_type == COMMAND_MOV || command_type == COMMAND_MOV_CNT || command_type == COMMAND_SET))
 		{
 			// snprintf returns the message length without counting the final null byte.
-			int command_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "%.2f , %.2f \r\n", Azc, Elc);
+			int command_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "%.2f , %.2f \r\n", Pan_command, Tilt_command);
 			// A length as large as the buffer means snprintf had to truncate the message.
 			if (command_message_length > 0 && command_message_length < (int)sizeof(sendbuffer))
 			{
@@ -824,12 +824,12 @@ void MYPROG_main_loop()
 		// A command received in the same loop must not restart motion after the fault.
 		move = 0;
 		mode = 0;
-		MYPROG_disable_az();
-		MYPROG_disable_el();
+		MYPROG_disable_pan();
+		MYPROG_disable_tilt();
 		MYPROG_SendData(position_discontinuity_message, (int)sizeof(position_discontinuity_message) - 1);
 	}
 
-	int target_reached = move_az && move_el;
+	int target_reached = move_pan && move_tilt;
 
 	if(move && !target_reached && mode ==0)
 			{
@@ -842,14 +842,14 @@ void MYPROG_main_loop()
 				//command_read =0;
 					  move = 0;
 					  //buff =0;
-					  MYPROG_disable_az();
-					  MYPROG_disable_el();
+					  MYPROG_disable_pan();
+					  MYPROG_disable_tilt();
 			}
 
 
 
 	// Example: send through the report's \n, but not the unused remainder of sendbuffer.
-	int position_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "MSG:POS:PAN=%.3f,TILT=%.3f\r\n", Az_pos_deg, El_pos_deg);
+	int position_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "MSG:POS:PAN=%.3f,TILT=%.3f\r\n", Pan_pos_deg, Tilt_pos_deg);
 	if (position_message_length > 0 && position_message_length < (int)sizeof(sendbuffer))
 	{
 		MYPROG_SendData(sendbuffer, position_message_length);
@@ -868,40 +868,40 @@ void MYPROG_main_loop()
 
 void MYPROG_move_axis(int axis, int speed, int dir)
 {
-	// ch1 is AZ clockwise   ch2 is AZ counter clockwise
-	// ch3 is EL clockwise   ch4 is EL counter clockwise
+	// ch1 is PAN clockwise   ch2 is PAN counter clockwise
+	// ch3 is TILT clockwise   ch4 is TILT counter clockwise
 	//speed is PWM from 0 to 255;
 
 	    if(axis ==1){
-	    	MYPROG_disable_az();
+		MYPROG_disable_pan();
 	    	if(dir ==1){
 	    	TIM3->CCR2 = 0;
 	    	TIM3->CCR1 = speed;
-	    	MYPROG_enable_az();
+		MYPROG_enable_pan();
 	    	}else{
 	    	TIM3->CCR1 = 0;
 	    	TIM3->CCR2 = speed;
-	    	MYPROG_enable_az();
+		MYPROG_enable_pan();
 	    	}
 
 	    }else if(axis ==2)
 	    {
-	    	MYPROG_disable_el();
+		MYPROG_disable_tilt();
 	    	if(dir ==1){
 
 	    	TIM3->CCR3 = speed;
 	    	TIM3->CCR4 = 0;
-	    	MYPROG_enable_el();
+		MYPROG_enable_tilt();
 	    	}else{
 	    	TIM3->CCR4 = speed;
 	    	TIM3->CCR3 = 0;
-	    	MYPROG_enable_el();
+		MYPROG_enable_tilt();
 	    	}
 
 
 	    }else{
-	    	MYPROG_disable_el();
-	    	MYPROG_disable_az();
+		MYPROG_disable_tilt();
+		MYPROG_disable_pan();
 	    	TIM3->CCR2 =0;
 	    	TIM3->CCR1 =0;
 	    	TIM3->CCR3 =0;
@@ -912,28 +912,28 @@ void MYPROG_move_axis(int axis, int speed, int dir)
 void MYPROG_motor_control_loop()
 {
 
-	float devEl = fabs(El_pos_deg - command_position_EL);
-	float devAz = fabs(Az_pos_deg - command_position_AZ);
+	float tilt_deviation = fabs(Tilt_pos_deg - command_position_TILT);
+	float pan_deviation = fabs(Pan_pos_deg - command_position_PAN);
 
 
 
-	if(Az_pos_deg > (command_position_AZ-2) && Az_pos_deg < (command_position_AZ+2))
+	if(Pan_pos_deg > (command_position_PAN-2) && Pan_pos_deg < (command_position_PAN+2))
 		{
 			//set low speed
-			Az_speed =devAz*78+99;
+			Pan_speed =pan_deviation*78+99;
 		}else {
 			//set slew speed
-			Az_speed = 255;
+			Pan_speed = 255;
 		}
 
 
-	if(El_pos_deg > (command_position_EL-2) && El_pos_deg < (command_position_EL+2))
+	if(Tilt_pos_deg > (command_position_TILT-2) && Tilt_pos_deg < (command_position_TILT+2))
 			{
 				//set low speed
-				El_speed = devEl*96+63;
+				Tilt_speed = tilt_deviation*96+63;
 			}else {
 				//set slew speed
-				El_speed = 255;
+				Tilt_speed = 255;
 			}
 
 
@@ -941,39 +941,39 @@ void MYPROG_motor_control_loop()
 
 
 
-	if(Az_pos_deg < (command_position_AZ-0.1))
+	if(Pan_pos_deg < (command_position_PAN-0.1))
 	{
 		//move right
-		MYPROG_move_axis(1, Az_speed, 1);
-		move_az = 0;
-	}else if( Az_pos_deg>(command_position_AZ+0.1))
+		MYPROG_move_axis(1, Pan_speed, 1);
+		move_pan = 0;
+	}else if( Pan_pos_deg>(command_position_PAN+0.1))
 	{
 		// move left
-		MYPROG_move_axis(1, Az_speed, 0);
-		move_az = 0;
+		MYPROG_move_axis(1, Pan_speed, 0);
+		move_pan = 0;
 	}else{
 		//stop
-		MYPROG_disable_az();
-		move_az = 1;
+		MYPROG_disable_pan();
+		move_pan = 1;
 	}
 
 
 
 
-	if(El_pos_deg < (command_position_EL-0.1))
+	if(Tilt_pos_deg < (command_position_TILT-0.1))
 	{
 		//move right
-		MYPROG_move_axis(2, El_speed, 1);
-		move_el =0;
-	}else if( El_pos_deg>(command_position_EL+0.1))
+		MYPROG_move_axis(2, Tilt_speed, 1);
+		move_tilt =0;
+	}else if( Tilt_pos_deg>(command_position_TILT+0.1))
 	{
 		// move left
-		MYPROG_move_axis(2, El_speed, 0);
-		move_el =0;
+		MYPROG_move_axis(2, Tilt_speed, 0);
+		move_tilt =0;
 	}else{
 		//stop
-		 MYPROG_disable_el();
-		 move_el =1;
+		 MYPROG_disable_tilt();
+		 move_tilt =1;
 	}
 
 
@@ -1034,8 +1034,8 @@ int main(void)
     HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
     HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
 
-    MYPROG_disable_el();
-    MYPROG_disable_az();
+    MYPROG_disable_tilt();
+    MYPROG_disable_pan();
   /* USER CODE END 2 */
 
   /* Infinite loop */
