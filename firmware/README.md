@@ -7,14 +7,14 @@ Caudill on 2025-02-17.
 
 The Python controller sends requested physical elevation directly as firmware
 pitch; it no longer performs elevation-regime SET operations. Compatible
-firmware therefore requires the expanded TIM1 encoder period of `43200`, with
-zero elevation at count `21600`, as configured in `chambermotorcontrol.ioc` and
+firmware therefore requires the expanded TIM1 encoder period of `60000`, with
+zero elevation at count `30000`, as configured in `chambermotorcontrol.ioc` and
 `Core/Src/main.c`.
 
 Do not use the direct-coordinate controller with the historical TIM1 period of
 `14400`. Its elevation counter cannot represent the controller's complete
-`[-90°, 45°]` move range without rollover. The current bounds are inclusive and
-do not yet provide an overshoot margin at exact counter endpoints.
+`[-90°, 45°]` move range without rollover. The current counter range provides
+rollover margin beyond those movement bounds.
 
 Firmware also accepts `CMD:CNT;` to query the raw encoder counters and
 `CMD:SET_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` to stop motion and set them

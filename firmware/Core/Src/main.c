@@ -100,6 +100,10 @@ volatile uint32_t emergency_stop_ack_count = 0;
 uint32_t previous_azimuth_counter = 0;
 uint32_t previous_elevation_counter = 0;
 bool position_discontinuity_baseline_valid = false;
+uint32_t azimuthZeroDegreeCounter = 50000;
+uint32_t elevationZeroDegreeCounter = 30000;
+float azimuthCountsPerDegree = 240.0f;
+float elevationCountsPerDegree = 240.0f;
 static const char firmware_version_message[] = "MSG:VERSION:" FIRMWARE_VERSION ";\r\n";
 static const char position_discontinuity_message[] = "MSG:ERR:POSITION_DISCONTINUITY;\r\n";
 
@@ -550,6 +554,26 @@ bool counter_change_exceeds(uint32_t current, uint32_t previous, uint32_t maximu
 	return change > maximum_change;
 }
 
+float azimuthCounterToDegrees(uint32_t counter)
+{
+	return ((float)counter - (float)azimuthZeroDegreeCounter) / azimuthCountsPerDegree;
+}
+
+uint32_t azimuthDegreesToCounter(float degrees)
+{
+	return (uint32_t)((float)azimuthZeroDegreeCounter + (degrees * azimuthCountsPerDegree));
+}
+
+float elevationCounterToDegrees(uint32_t counter)
+{
+	return ((float)counter - (float)elevationZeroDegreeCounter) / elevationCountsPerDegree;
+}
+
+uint32_t elevationDegreesToCounter(float degrees)
+{
+	return (uint32_t)((float)elevationZeroDegreeCounter + (degrees * elevationCountsPerDegree));
+}
+
 void MYPROG_main_loop()
 {
 	float settimer1 =0;
@@ -587,8 +611,8 @@ void MYPROG_main_loop()
 	previous_elevation_counter = (uint32_t)El_pos;
 	position_discontinuity_baseline_valid = true;
 
-	Az_pos_deg = (Az_pos - 43200)/240.0;
-	El_pos_deg = (El_pos - 21600)/240.0;
+	Az_pos_deg = azimuthCounterToDegrees((uint32_t)Az_pos);
+	El_pos_deg = elevationCounterToDegrees((uint32_t)El_pos);
 
 	MYPROG_Delay(5);
 	//MYPROG_SendData("ACK\n",3);
@@ -726,8 +750,8 @@ void MYPROG_main_loop()
 				send_counter_response = true;
 				break;
 			case COMMAND_MOV_CNT:
-				move_yaw = ((float)azimuth_counter - 43200.0f) / 240.0f;
-				move_pitch = ((float)elevation_counter - 21600.0f) / 240.0f;
+				move_yaw = azimuthCounterToDegrees(azimuth_counter);
+				move_pitch = elevationCounterToDegrees(elevation_counter);
 				/* fall through */
 			case COMMAND_MOV:
 				Azc = move_yaw;
@@ -743,8 +767,8 @@ void MYPROG_main_loop()
 			{
 				move = 0;
 				mode = 0;
-				TIM1->CNT = (uint32_t)(21600 + (settimer2 * 240.0f));
-				TIM2->CNT = (uint32_t)(43200 + (settimer1 * 240.0f));
+				TIM1->CNT = elevationDegreesToCounter(settimer2);
+				TIM2->CNT = azimuthDegreesToCounter(settimer1);
 				previous_azimuth_counter = TIM2->CNT;
 				previous_elevation_counter = TIM1->CNT;
 				position_discontinuity_baseline_valid = true;
@@ -1094,7 +1118,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 43200;
+  htim1.Init.Period = 60000;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;

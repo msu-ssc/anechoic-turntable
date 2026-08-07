@@ -58,7 +58,7 @@ normal serialized command queue and wait behind an active SET, MOV, or MOV_CNT.
 MOV_CNT operation using unsigned 32-bit encoder-counter targets. The controller
 sends the frame once and retries only if its acknowledgement is missing.
 Firmware converts the targets to degrees
-using pan zero `43200`, tilt zero `21600`, and `240` counts per degree, then
+using pan zero `50000`, tilt zero `30000`, and `240` counts per degree, then
 uses its normal MOV logic. The controller tracks the same converted target and
 sends the immediate stop byte if the operation exceeds its timeout or loses
 communication. MOV_CNT does not establish a trusted physical coordinate frame;
@@ -87,12 +87,12 @@ also send five consecutive stop bytes.
 trusted position and sending SET would be undesirable. It adopts the current
 firmware yaw/pitch as physical pan/tilt and sends no command to the hardware.
 
-Direct elevation commands require firmware configured with the expanded TIM1
-encoder period (`43200`) and center count (`21600`). Do not use this controller
+Direct elevation commands require firmware configured with TIM1 encoder period
+`60000` and center count `30000`. Do not use this controller
 with the historical `14400`-period elevation firmware: a normal move outside
-that firmware's narrow representable range can wrap the counter. The accepted
-move limits remain inclusive, so motion beyond an exact endpoint can still
-roll over; endpoint-margin improvements are separate future work.
+that firmware's narrow representable range can wrap the counter. The current
+firmware configuration provides rollover margin beyond the accepted move
+limits.
 
 `send_raw(payload)` is a diagnostic escape hatch that queues the supplied bytes
 for exactly one write through the controller's normal serialized writer. It

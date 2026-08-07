@@ -17,7 +17,7 @@ class FakeSerial:
         respond_to_sets=True,
         acknowledge_commands=True,
         firmware_version="2.0.8",
-        counters=(43200, 21600),
+        counters=(50000, 30000),
     ):
         self.respond_to_moves = respond_to_moves
         self.respond_to_sets = respond_to_sets
@@ -57,8 +57,8 @@ class FakeSerial:
         elif data.startswith(b"CMD:MOV_CNT:PAN=") and self.respond_to_moves:
             values = data.removeprefix(b"CMD:MOV_CNT:PAN=").removesuffix(b";")
             pan, tilt = values.split(b",TILT=")
-            yaw = (int(pan) - 43200) / 240
-            pitch = (int(tilt) - 21600) / 240
+            yaw = (int(pan) - 50000) / 240
+            pitch = (int(tilt) - 30000) / 240
             self.emit_internal_position(yaw=yaw, pitch=pitch)
         elif data == b"CMD:VERSION;" and self.firmware_version is not None:
             self.emit(f"MSG:VERSION:{self.firmware_version};\r\n".encode())
@@ -789,10 +789,10 @@ def test_counter_move_is_sent_once_after_ack_and_tracks_translated_target():
         wait_for(lambda: turntable.current_position() is not None)
         writes_before_move = len(fake.writes)
 
-        turntable.move_to_counters(pan=45_600, tilt=20_400)
+        turntable.move_to_counters(pan=52_400, tilt=28_800)
 
         wait_for(lambda: len(fake.writes) >= writes_before_move + 1)
-        assert fake.writes[writes_before_move:] == [b"CMD:MOV_CNT:PAN=45600,TILT=20400;"]
+        assert fake.writes[writes_before_move:] == [b"CMD:MOV_CNT:PAN=52400,TILT=28800;"]
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.NOT_SET)
         assert turntable.current_position() == turntable2.PanTilt(10, -5)
         assert not turntable.get_complete_state().has_been_set
@@ -807,7 +807,7 @@ def test_counter_move_uses_300_second_default_timeout():
         fake.emit_internal_position(yaw=0, pitch=0)
         wait_for(lambda: turntable.current_position() is not None)
 
-        turntable.move_to_counters(pan=45_600, tilt=20_400)
+        turntable.move_to_counters(pan=52_400, tilt=28_800)
 
         snapshot = wait_for(lambda: state if (state := turntable.get_complete_state()).activity_phase == "counter" else None)
         remaining = (snapshot.activity_timeout_at - snapshot.captured_at).total_seconds()

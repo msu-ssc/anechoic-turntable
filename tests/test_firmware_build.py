@@ -71,10 +71,26 @@ def test_counter_commands_use_exact_frames_and_existing_degree_targets() -> None
     assert '"CMD:MOV_CNT:PAN="' in main_source
     assert '"CMD:SET_CNT:PAN="' in main_source
     assert '"CMD:CNT:PAN="' not in main_source
-    assert "move_yaw = ((float)azimuth_counter - 43200.0f) / 240.0f;" in main_source
-    assert "move_pitch = ((float)elevation_counter - 21600.0f) / 240.0f;" in main_source
+    assert "uint32_t azimuthZeroDegreeCounter = 50000;" in main_source
+    assert "uint32_t elevationZeroDegreeCounter = 30000;" in main_source
+    assert "return ((float)counter - (float)azimuthZeroDegreeCounter) / azimuthCountsPerDegree;" in main_source
+    assert "return ((float)counter - (float)elevationZeroDegreeCounter) / elevationCountsPerDegree;" in main_source
+    assert "move_yaw = azimuthCounterToDegrees(azimuth_counter);" in main_source
+    assert "move_pitch = elevationCounterToDegrees(elevation_counter);" in main_source
+    assert "TIM1->CNT = elevationDegreesToCounter(settimer2);" in main_source
+    assert "TIM2->CNT = azimuthDegreesToCounter(settimer1);" in main_source
     assert "case COMMAND_MOV_CNT:" in main_source
     assert "case COMMAND_MOV:" in main_source
+
+
+def test_firmware_uses_expanded_elevation_counter_period() -> None:
+    """Generated firmware and Cube configuration use the same TIM1 period."""
+
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+    cube_configuration = (REPOSITORY_ROOT / "firmware/chambermotorcontrol.ioc").read_text(encoding="utf-8")
+
+    assert "htim1.Init.Period = 60000;" in main_source
+    assert "TIM1.Period=60000" in cube_configuration
 
 
 def test_firmware_position_report_uses_exact_pan_tilt_frame_and_precision() -> None:
