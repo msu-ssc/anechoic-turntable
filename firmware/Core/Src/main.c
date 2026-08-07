@@ -98,8 +98,6 @@ volatile uint32_t unable_to_parse_frame_count = 0;
 volatile uint32_t stop_generation = 0;
 volatile uint32_t emergency_stop_ack_count = 0;
 static const char firmware_version_message[] = "MSG:VERSION:" FIRMWARE_VERSION ";\r\n";
-static const char mov_out_of_bounds_message[] = "MSG:ERR:OUT_OF_BOUNDS_MOV;\r\n";
-static const char set_out_of_bounds_message[] = "MSG:ERR:OUT_OF_BOUNDS_SET;\r\n";
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
@@ -635,12 +633,14 @@ void MYPROG_main_loop()
 		case COMMAND_MOV:
 			command_parsed = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
 			command_rejected = command_parsed &&
-				(move_yaw < -180.0f || move_yaw > 180.0f || move_pitch < -90.0f || move_pitch > 45.0f);
+				(move_yaw < MIN_PAN_DEG || move_yaw > MAX_PAN_DEG ||
+				 move_pitch < MIN_MOVE_TILT_DEG || move_pitch > MAX_MOVE_TILT_DEG);
 			break;
 		case COMMAND_SET:
 			command_parsed = parse_set_command(command_to_process, &settimer1, &settimer2);
 			command_rejected = command_parsed &&
-				(settimer1 < -180.0f || settimer1 > 180.0f || settimer2 < -90.0f || settimer2 > 90.0f);
+				(settimer1 < MIN_PAN_DEG || settimer1 > MAX_PAN_DEG ||
+				 settimer2 < MIN_SET_TILT_DEG || settimer2 > MAX_SET_TILT_DEG);
 			break;
 		case COMMAND_VERSION:
 			command_parsed = strcmp(command_to_process, "CMD:VERSION") == 0;
@@ -732,7 +732,9 @@ void MYPROG_main_loop()
 		}
 		else
 		{
-			const char *reason = command_rejected || command_cancelled ? "REJECTED" : "UNABLE_TO_PARSE";
+			const char *reason = command_rejected
+				? "OUT_OF_BOUNDS"
+				: (command_cancelled ? "REJECTED" : "UNABLE_TO_PARSE");
 			MYPROG_SendAcknowledgement(command_type_name(command_type), false, reason);
 		}
 

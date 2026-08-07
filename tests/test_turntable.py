@@ -179,6 +179,7 @@ def test_counter_response_becomes_a_typed_event():
         (b"MSG:ACK:EMERGENCY_STOP;\r\n", "ACK", "EMERGENCY_STOP", None),
         (b"MSG:NAK:MOV_CNT,UNABLE_TO_PARSE;\r\n", "NAK", "MOV_CNT", "UNABLE_TO_PARSE"),
         (b"MSG:NAK:UNKNOWN,REJECTED;\r\n", "NAK", "UNKNOWN", "REJECTED"),
+        (b"MSG:NAK:MOV,OUT_OF_BOUNDS;\r\n", "NAK", "MOV", "OUT_OF_BOUNDS"),
     ],
 )
 def test_acknowledgement_becomes_a_typed_event(message, status, command, reason):

@@ -94,3 +94,4 @@ def test_firmware_acknowledges_accepted_and_rejected_commands() -> None:
     assert 'MYPROG_SendAcknowledgement("EMERGENCY_STOP", true, NULL);' in main_source
     assert 'MYPROG_SendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");' in main_source
     assert "command_rejected = command_parsed" in main_source
+    assert '? "OUT_OF_BOUNDS"' in main_source
