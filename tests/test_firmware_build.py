@@ -75,8 +75,8 @@ def test_counter_commands_use_exact_frames_and_existing_degree_targets() -> None
     assert "uint32_t tiltZeroDegreeCounter = 30000;" in main_source
     assert "return ((float)counter - (float)panZeroDegreeCounter) / panCountsPerDegree;" in main_source
     assert "return ((float)counter - (float)tiltZeroDegreeCounter) / tiltCountsPerDegree;" in main_source
-    assert "move_pan = panCounterToDegrees(pan_counter);" in main_source
-    assert "move_tilt = tiltCounterToDegrees(tilt_counter);" in main_source
+    assert "requested_pan = panCounterToDegrees(pan_counter);" in main_source
+    assert "requested_tilt = tiltCounterToDegrees(tilt_counter);" in main_source
     assert "TIM1->CNT = tiltDegreesToCounter(settimer2);" in main_source
     assert "TIM2->CNT = panDegreesToCounter(settimer1);" in main_source
     assert "case COMMAND_MOV_CNT:" in main_source
@@ -111,6 +111,27 @@ def test_firmware_acknowledges_accepted_and_rejected_commands() -> None:
     assert 'MYPROG_SendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");' in main_source
     assert "command_rejected = command_parsed" in main_source
     assert '? "OUT_OF_BOUNDS"' in main_source
+
+
+def test_firmware_resets_completion_state_when_accepting_a_move() -> None:
+    """A new MOV or MOV_CNT cannot inherit target-reached flags."""
+
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert "float requested_pan = 0.0f;" in main_source
+    assert "float requested_tilt = 0.0f;" in main_source
+    assert "float move_pan = 0.0f;" not in main_source
+    assert "float move_tilt = 0.0f;" not in main_source
+    movement_activation = re.search(
+        r"case COMMAND_MOV:\s+"
+        r"Pan_command = requested_pan;\s+"
+        r"Tilt_command = requested_tilt;\s+"
+        r"move_pan = 0;\s+"
+        r"move_tilt = 0;\s+"
+        r"move = 1;",
+        main_source,
+    )
+    assert movement_activation is not None
 
 
 def test_firmware_stops_on_position_discontinuity() -> None:

@@ -670,8 +670,8 @@ void MYPROG_main_loop()
 	{
 		//MYPROG_SendData("read command",10);
 		// Keep parsed movement coordinates local until the complete command can be applied safely.
-		float move_pan = 0.0f;
-		float move_tilt = 0.0f;
+		float requested_pan = 0.0f;
+		float requested_tilt = 0.0f;
     uint32_t pan_counter = 0;
     uint32_t tilt_counter = 0;
 		command_type_t command_type = identify_command_type(command_to_process);
@@ -680,10 +680,10 @@ void MYPROG_main_loop()
 		switch (command_type)
 		{
 		case COMMAND_MOV:
-			command_parsed = parse_mov_command(command_to_process, &move_pan, &move_tilt);
+			command_parsed = parse_mov_command(command_to_process, &requested_pan, &requested_tilt);
 			command_rejected = command_parsed &&
-				(move_pan < MIN_PAN_DEG || move_pan > MAX_PAN_DEG ||
-				 move_tilt < MIN_TILT_DEG || move_tilt > MAX_TILT_DEG);
+				(requested_pan < MIN_PAN_DEG || requested_pan > MAX_PAN_DEG ||
+				 requested_tilt < MIN_TILT_DEG || requested_tilt > MAX_TILT_DEG);
 			break;
 		case COMMAND_SET:
 			command_parsed = parse_set_command(command_to_process, &settimer1, &settimer2);
@@ -750,12 +750,14 @@ void MYPROG_main_loop()
 				send_counter_response = true;
 				break;
 			case COMMAND_MOV_CNT:
-				move_pan = panCounterToDegrees(pan_counter);
-				move_tilt = tiltCounterToDegrees(tilt_counter);
+				requested_pan = panCounterToDegrees(pan_counter);
+				requested_tilt = tiltCounterToDegrees(tilt_counter);
 				/* fall through */
 			case COMMAND_MOV:
-				Pan_command = move_pan;
-				Tilt_command = move_tilt;
+				Pan_command = requested_pan;
+				Tilt_command = requested_tilt;
+				move_pan = 0;
+				move_tilt = 0;
 				move = 1;
 				mode = 0;
 				command_position_PAN = Pan_command;
