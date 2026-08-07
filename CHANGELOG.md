@@ -57,3 +57,13 @@ Add controller-side support for ACK/NAK messages from firmware.
 Controller now accepts new-style position output like `MSG:POS:PAN=123.456,TILT=-87.654;`
 
 This is considered a major change only because the underlying firmware change is a breaking change. There is no change to the controller's external interface.
+
+## 0.11.0 — 2026-08-07
+
+Several small TUI improvements
+- Add "connect"/"disconnect" button.
+- Add "version" text command
+- Add command scrolling
+- Filter out position messages by default
+- Include text on "other" events
+- Make state display more prominent
