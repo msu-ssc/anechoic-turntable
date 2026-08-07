@@ -77,3 +77,7 @@ Add controller handling of
 ## 0.13.0 — 2026-08-07
 
 Standardize everything on pan/tilt terminology
+
+## 0.14.0 — 2026-08-07
+
+Add ZMQ publishing of turntable position
