@@ -51,3 +51,9 @@ Add counter SET and MOV commands
 Add controller-side support for ACK/NAK messages from firmware.
 
 (Note that this is considered only a minor change because external interfaces that completely ignore these ACKs and NAKs would still function exactly the same.)
+
+## 0.10.0 — 2026-08-07
+
+Controller now accepts new-style position output like `MSG:POS:PAN=123.456,TILT=-87.654;`
+
+This is considered a major change only because the underlying firmware change is a breaking change. There is no change to the controller's external interface.
