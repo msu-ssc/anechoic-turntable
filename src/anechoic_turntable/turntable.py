@@ -25,6 +25,7 @@ from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessageError
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
+from anechoic_turntable.position_publisher import PositionPublisher
 from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.serial_listener import SerialConnection
 from anechoic_turntable.serial_listener import SerialListener
@@ -49,6 +50,9 @@ class Turntable:
         command_repetitions: int = 3,
         event_history_size: int = 1_000,
         poll_interval: float = 0.01,
+        publish: bool = True,
+        publish_host: str = "localhost",
+        publish_port: int = 8_005,
         logger: logging.Logger | None = None,
         serial_connection: SerialConnection | None = None,
     ) -> None:
@@ -62,6 +66,16 @@ class Turntable:
         self.timeout = timeout
         self.logger = logger or logging.getLogger(__name__)
         self._closed = False
+
+        self._position_publisher = (
+            PositionPublisher(
+                host=publish_host,
+                port=publish_port,
+                logger=self.logger.getChild("publisher"),
+            )
+            if publish
+            else None
+        )
 
         if serial_connection is None:
             serial_connection = serial.Serial(port=port, baudrate=baudrate, timeout=timeout)
@@ -82,8 +96,11 @@ class Turntable:
             command_repetitions=command_repetitions,
             event_history_size=event_history_size,
             poll_interval=poll_interval,
+            position_publisher=self._position_publisher,
             logger=self.logger.getChild("controller"),
         )
+        if self._position_publisher is not None:
+            self._position_publisher.start()
         self._listener.start()
         self._controller.start()
 
@@ -99,6 +116,9 @@ class Turntable:
         command_repetitions: int = 3,
         event_history_size: int = 1_000,
         poll_interval: float = 0.01,
+        publish: bool = True,
+        publish_host: str = "localhost",
+        publish_port: int = 8_005,
         logger: logging.Logger | None = None,
     ) -> Turntable:
         """Find the first serial port that emits a valid position report."""
@@ -122,6 +142,9 @@ class Turntable:
                     command_repetitions=command_repetitions,
                     event_history_size=event_history_size,
                     poll_interval=poll_interval,
+                    publish=publish,
+                    publish_host=publish_host,
+                    publish_port=publish_port,
                     logger=logger,
                 )
                 deadline = time.monotonic() + discovery_timeout
@@ -268,7 +291,7 @@ class Turntable:
         return self._controller.last_error()
 
     def close(self, *, join_timeout: float = 2.0) -> None:
-        """Stop both threads and close the serial connection."""
+        """Stop background threads and close the serial connection."""
 
         if self._closed:
             return
@@ -277,6 +300,9 @@ class Turntable:
         self._controller.stop()
         self._listener.join(timeout=join_timeout)
         self._controller.join(timeout=join_timeout)
+        if self._position_publisher is not None:
+            self._position_publisher.stop()
+            self._position_publisher.join(timeout=join_timeout)
         self._serial.close()
 
     def __enter__(self) -> Self:
