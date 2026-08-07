@@ -86,3 +86,7 @@ Modify firmware angle determination calculations to allow "wiggle room" near -18
 ## 3.2.0 — 2026-08-07
 
 Standardize everything on pan/tilt terminology
+
+## 3.2.1 — 2026-08-07
+
+BUGFIX: Fix race condition when starting movement directly after previous move finishes
