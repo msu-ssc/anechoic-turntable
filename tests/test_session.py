@@ -10,6 +10,7 @@ class FakeTurntable:
         self.aborted = False
         self.closed = False
         self.raw_writes = []
+        self.version_requests = 0
 
     def abort(self):
         self.aborted = True
@@ -19,6 +20,9 @@ class FakeTurntable:
 
     def send_raw(self, payload):
         self.raw_writes.append(payload)
+
+    def request_version(self):
+        self.version_requests += 1
 
 
 def test_connection_finishing_after_close_is_stopped_and_discarded():
@@ -73,3 +77,13 @@ def test_session_raw_rejects_non_ascii():
         raise AssertionError("non-ASCII raw command was accepted")
 
     assert table.raw_writes == []
+
+
+def test_session_requests_the_connected_firmware_version():
+    table = FakeTurntable()
+    session = TurntableSession(connector=lambda: table)
+    assert session.connect().connected
+
+    session.request_version()
+
+    assert table.version_requests == 1
