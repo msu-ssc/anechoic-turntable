@@ -25,9 +25,9 @@ Start the terminal UI with:
 uv run anechoic-turntable-tui
 ```
 
-The Move and Set sections provide azimuth, elevation, and timeout inputs. The
+The Move and Set sections provide pan, tilt, and timeout inputs. The
 move timeout is optional: when blank, subtle placeholder text shows the current
-automatic estimate. Go home moves to azimuth 0° and elevation 0° with an
+automatic estimate. Go home moves to pan 0° and tilt 0° with an
 automatic timeout; Confirm approves the currently reported position without
 sending a SET command. The Raw
 and Parsed panels show received serial events, with a message-type filter for
@@ -36,7 +36,8 @@ the exact bytes written to the serial connection. Parsed ACK and NAK events and
 the latest or pending command acknowledgement are shown in the diagnostic
 streams and controller summary.
 
-The command field also accepts `connect`, `info`, `confirm`, `set`, `mov`,
+The command field also accepts `connect`, `info`, `confirm`,
+`set pan=<number> tilt=<number>`, `mov pan=<number> tilt=<number>`,
 `set_cnt pan=<integer> tilt=<integer>`, `mov_cnt pan=<integer> tilt=<integer>`,
 `counter?`, `raw`, `stop`, `help`, and `exit`. The counter commands directly
 set, move to, or query firmware encoder counters for diagnostics; setting

@@ -45,7 +45,7 @@ from anechoic_turntable.session import parse_coordinates
 from anechoic_turntable.session import parse_counter_values
 from anechoic_turntable.turntable import Turntable
 
-_COMMAND_HELP = "Commands: connect | info | confirm | set az=<number> el=<number> | mov az=<number> el=<number> | set_cnt pan=<integer> tilt=<integer> | mov_cnt pan=<integer> tilt=<integer> | counter? | raw <ASCII bytes> | stop | help | exit"
+_COMMAND_HELP = "Commands: connect | info | confirm | set pan=<number> tilt=<number> | mov pan=<number> tilt=<number> | set_cnt pan=<integer> tilt=<integer> | mov_cnt pan=<integer> tilt=<integer> | counter? | raw <ASCII bytes> | stop | help | exit"
 _MESSAGE_KINDS = ("position", "version", "counter", "acknowledgement", "other")
 
 
@@ -65,9 +65,9 @@ class _TurntableTuiSession(TurntableSession):
         if turntable is None:
             raise NotConnectedError("not connected")
         if command == "set":
-            turntable.set_position(pan=coordinates.azimuth, tilt=coordinates.elevation, timeout=timeout)
+            turntable.set_position(pan=coordinates.pan, tilt=coordinates.tilt, timeout=timeout)
         else:
-            turntable.move_to(pan=coordinates.azimuth, tilt=coordinates.elevation, move_timeout=timeout)
+            turntable.move_to(pan=coordinates.pan, tilt=coordinates.tilt, move_timeout=timeout)
 
     def events(self) -> tuple[ReceivedMessage, ...]:
         """Return receive history through the connected public API."""
@@ -91,8 +91,8 @@ class _TurntableTuiSession(TurntableSession):
         if turntable is None:
             raise NotConnectedError("not connected")
         travel_time = turntable.estimate_time(
-            pan=coordinates.azimuth,
-            tilt=coordinates.elevation,
+            pan=coordinates.pan,
+            tilt=coordinates.tilt,
         )
         return travel_time * MOVE_TIMEOUT_ESTIMATE_MULTIPLIER + MOVE_TIMEOUT_MARGIN_SECONDS
 
@@ -304,12 +304,12 @@ class TurntableTui(App[None]):
                     yield Button("EMERGENCY STOP", id="emergency-stop", variant="error")
                 with Vertical(classes="panel", id="position-panel"):
                     yield Label("Position", classes="panel-title")
-                    yield Static("az: —", id="azimuth", markup=False)
-                    yield Static("el: —", id="elevation", markup=False)
+                    yield Static("pan: —", id="azimuth", markup=False)
+                    yield Static("tilt: —", id="elevation", markup=False)
                 with Vertical(classes="panel", id="target-panel"):
                     yield Label("Target", classes="panel-title")
-                    yield Static("az: —", id="target-azimuth", markup=False)
-                    yield Static("el: —", id="target-elevation", markup=False)
+                    yield Static("pan: —", id="target-azimuth", markup=False)
+                    yield Static("tilt: —", id="target-elevation", markup=False)
             with Horizontal(id="streams"):
                 with Vertical(classes="stream-panel"):
                     yield Label("Raw", classes="panel-title stream-heading")
@@ -331,12 +331,12 @@ class TurntableTui(App[None]):
                 with Vertical(classes="operation-panel"):
                     yield Label("Move", classes="panel-title")
                     with Horizontal(classes="field-labels"):
-                        yield Label("Az")
-                        yield Label("El")
+                        yield Label("Pan")
+                        yield Label("Tilt")
                         yield Label("Timeout")
                     with Horizontal(classes="operation-fields"):
-                        yield Input(value="0", placeholder="az", id="move-az", type="number")
-                        yield Input(value="0", placeholder="el", id="move-el", type="number")
+                        yield Input(value="0", placeholder="pan", id="move-az", type="number")
+                        yield Input(value="0", placeholder="tilt", id="move-el", type="number")
                         yield Input(placeholder="auto", id="move-timeout", type="number")
                     with Horizontal(classes="operation-actions"):
                         yield Button("Move", id="move-submit", variant="primary")
@@ -344,12 +344,12 @@ class TurntableTui(App[None]):
                 with Vertical(classes="operation-panel"):
                     yield Label("Set", classes="panel-title")
                     with Horizontal(classes="field-labels"):
-                        yield Label("Az")
-                        yield Label("El")
+                        yield Label("Pan")
+                        yield Label("Tilt")
                         yield Label("Timeout")
                     with Horizontal(classes="operation-fields"):
-                        yield Input(value="0", placeholder="az", id="set-az", type="number")
-                        yield Input(value="0", placeholder="el", id="set-el", type="number")
+                        yield Input(value="0", placeholder="pan", id="set-az", type="number")
+                        yield Input(value="0", placeholder="tilt", id="set-el", type="number")
                         yield Input(value="5", placeholder="timeout", id="set-timeout", type="number")
                     with Horizontal(classes="operation-actions"):
                         yield Button("Set", id="set-submit", variant="primary")
@@ -402,7 +402,7 @@ class TurntableTui(App[None]):
         elif button_id == "move-submit":
             self._queue_from_inputs("mov", "move")
         elif button_id == "move-home":
-            self._queue_coordinates("mov", Coordinates(azimuth=0, elevation=0))
+            self._queue_coordinates("mov", Coordinates(pan=0, tilt=0))
         elif button_id == "set-submit":
             self._queue_from_inputs("set", "set")
         elif button_id == "set-confirm":
@@ -512,8 +512,8 @@ class TurntableTui(App[None]):
         placeholder = "auto"
         try:
             coordinates = Coordinates(
-                azimuth=float(self.query_one("#move-az", Input).value),
-                elevation=float(self.query_one("#move-el", Input).value),
+                pan=float(self.query_one("#move-az", Input).value),
+                tilt=float(self.query_one("#move-el", Input).value),
             )
             timeout = self._session.estimate_move_timeout(coordinates)
             placeholder = f"auto: {timeout:.2f} seconds"
@@ -545,13 +545,13 @@ class TurntableTui(App[None]):
     def _queue_from_inputs(self, command: Literal["set", "mov"], prefix: str) -> None:
         try:
             coordinates = Coordinates(
-                azimuth=float(self.query_one(f"#{prefix}-az", Input).value),
-                elevation=float(self.query_one(f"#{prefix}-el", Input).value),
+                pan=float(self.query_one(f"#{prefix}-az", Input).value),
+                tilt=float(self.query_one(f"#{prefix}-el", Input).value),
             )
             timeout_value = self.query_one(f"#{prefix}-timeout", Input).value.strip()
             timeout = None if command == "mov" and not timeout_value else float(timeout_value)
         except ValueError:
-            self._write_message("error: az, el, and timeout must be numbers")
+            self._write_message("error: pan, tilt, and timeout must be numbers")
             return
         self._queue_coordinates(command, coordinates, timeout=timeout)
 
@@ -571,7 +571,7 @@ class TurntableTui(App[None]):
             self._write_message(f"error: {exc}")
             return
         timeout_text = "" if timeout is None else f" timeout={timeout:g}"
-        self._write_message(f"{command} queued: az={coordinates.azimuth:.3f} el={coordinates.elevation:.3f}{timeout_text}")
+        self._write_message(f"{command} queued: pan={coordinates.pan:.3f} tilt={coordinates.tilt:.3f}{timeout_text}")
         self.refresh_controller_state()
 
     def _send_raw(self, command: str) -> None:
@@ -637,18 +637,18 @@ class TurntableTui(App[None]):
         except (TurntableError, ValueError) as exc:
             self._write_message(f"error: {exc}")
             return
-        self._write_message(f"position confirmed: az={position.pan:.3f} el={position.tilt:.3f}")
+        self._write_message(f"position confirmed: pan={position.pan:.3f} tilt={position.tilt:.3f}")
         self.refresh_controller_state()
 
     @staticmethod
     def _format_info(snapshot: TurntableCompleteState) -> str:
         parts = [f"state={snapshot.state.value}", f"activity={snapshot.activity.value}"]
         if snapshot.corrected_position is None:
-            parts.extend(("az=?", "el=?"))
+            parts.extend(("pan=?", "tilt=?"))
         else:
-            parts.extend((f"az={snapshot.corrected_position.pan:.3f}", f"el={snapshot.corrected_position.tilt:.3f}"))
+            parts.extend((f"pan={snapshot.corrected_position.pan:.3f}", f"tilt={snapshot.corrected_position.tilt:.3f}"))
         if snapshot.target_position is not None:
-            parts.extend((f"target_az={snapshot.target_position.pan:.3f}", f"target_el={snapshot.target_position.tilt:.3f}"))
+            parts.extend((f"target_pan={snapshot.target_position.pan:.3f}", f"target_tilt={snapshot.target_position.tilt:.3f}"))
         if snapshot.last_error is not None:
             parts.append(f"error={snapshot.last_error}")
         return " ".join(parts)
@@ -675,8 +675,8 @@ class TurntableTui(App[None]):
         else:
             azimuth = f"{position.yaw:.3f}°"
             elevation = f"{position.pitch:.3f}°"
-        self.query_one(f"#{azimuth_widget}", Static).update(f"az: {azimuth}")
-        self.query_one(f"#{elevation_widget}", Static).update(f"el: {elevation}")
+        self.query_one(f"#{azimuth_widget}", Static).update(f"pan: {azimuth}")
+        self.query_one(f"#{elevation_widget}", Static).update(f"tilt: {elevation}")
 
     def _update_receive_streams(self, events: tuple[ReceivedMessage, ...]) -> None:
         recent_events = events[-5:]
@@ -703,7 +703,7 @@ class TurntableTui(App[None]):
     @staticmethod
     def _format_parsed_event(event: ReceivedMessage) -> str:
         if isinstance(event, ReceivedMessagePosition):
-            return f"position: az={event.yaw if event.yaw is not None else '—'} el={event.pitch if event.pitch is not None else '—'}"
+            return f"position: pan={event.yaw if event.yaw is not None else '—'} tilt={event.pitch if event.pitch is not None else '—'}"
         if isinstance(event, ReceivedMessageVersion):
             return f"version: {event.version}"
         if isinstance(event, ReceivedMessageCounter):

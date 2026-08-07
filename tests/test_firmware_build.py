@@ -77,6 +77,13 @@ def test_counter_commands_use_exact_frames_and_existing_degree_targets() -> None
     assert "case COMMAND_MOV:" in main_source
 
 
+def test_firmware_position_report_uses_exact_pan_tilt_frame_and_precision() -> None:
+    """Position reports preserve encoder resolution in the current wire frame."""
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+
+    assert '"MSG:POS:PAN=%.3f,TILT=%.3f\\r\\n"' in main_source
+
+
 def test_firmware_acknowledges_accepted_and_rejected_commands() -> None:
     """Command results and emergency stop use exact ACK/NAK framing."""
 

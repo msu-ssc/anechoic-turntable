@@ -128,8 +128,8 @@ the empirical model and its limitations.
 There is no coordinate offset or elevation-regime conversion: pan equals yaw
 and tilt equals pitch.
 
-The firmware's USB command format is fixed and continues to place these values
-in its historical azimuth/elevation slots. That wire format does not change.
+Firmware position reports label these values `PAN` and `TILT`; raw
+`ReceivedMessagePosition` events retain the internal `yaw` and `pitch` names.
 
 ## Complete diagnostic state
 
