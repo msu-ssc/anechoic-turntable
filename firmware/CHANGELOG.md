@@ -63,3 +63,7 @@ Add counter SET and MOV commands
 Add firmware ACK/NAK response to all commands.
 
 (Note that this is considered only a minor change because external interfaces that completely ignore these ACKs and NAKs would still function exactly the same.)
+
+## 3.0.0 — 2026-08-07
+
+Firmware now outputs position in a format like `MSG:POS:PAN=123.456,TILT=-87.654;`
