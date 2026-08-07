@@ -1,5 +1,5 @@
 # Turntable Firmware–Controller Protocol Contract
-PROTOCOL_VERSION=3.2.0
+PROTOCOL_VERSION=3.2.1
 
 This document is the authoritative contract between the STM32 turntable
 firmware and the Python controller. If an implementation differs from this
@@ -167,22 +167,13 @@ bounds with `OUT_OF_BOUNDS` and MUST NOT begin that movement.
 
 The controller sends those requested values directly as yaw and pitch. Firmware
 used with this controller MUST represent the complete range without relying on
-controller-managed coordinate resets. The current compatible configuration
-uses TIM1 period `43200` with elevation zero at count `21600`.
-
-The bounds are inclusive. They do not provide margin against encoder-counter
-rollover if physical motion overshoots an exact representable endpoint.
+controller-managed coordinate resets.
 
 ### MOV_CNT
 
 `CMD:MOV_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` commands both axes using
-raw encoder-counter targets. Firmware MUST convert the counters to the same
-yaw and pitch degree targets used by MOV:
-
-```text
-yaw = (pan-counter - 43200) / 240
-pitch = (tilt-counter - 21600) / 240
-```
+raw encoder-counter targets. The counter to angle formulas are considered
+firmware implementation details and are not part of this spec.
 
 After conversion, firmware MUST use the existing MOV movement logic and
 position-report completion behavior without a separate counter-based motor
