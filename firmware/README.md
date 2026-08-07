@@ -5,14 +5,14 @@ Caudill on 2025-02-17.
 
 ## Controller compatibility
 
-The Python controller sends requested physical elevation directly as firmware
-pitch; it no longer performs elevation-regime SET operations. Compatible
+The Python controller sends requested physical tilt directly as firmware
+tilt; it no longer performs tilt-regime SET operations. Compatible
 firmware therefore requires the expanded TIM1 encoder period of `60000`, with
-zero elevation at count `30000`, as configured in `chambermotorcontrol.ioc` and
+zero tilt at count `30000`, as configured in `chambermotorcontrol.ioc` and
 `Core/Src/main.c`.
 
 Do not use the direct-coordinate controller with the historical TIM1 period of
-`14400`. Its elevation counter cannot represent the controller's complete
+`14400`. Its tilt counter cannot represent the controller's complete
 `[-90°, 45°]` move range without rollover. The current counter range provides
 rollover margin beyond those movement bounds.
 

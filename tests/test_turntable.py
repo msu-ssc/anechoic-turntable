@@ -48,18 +48,18 @@ class FakeSerial:
             self.emit(f"MSG:ACK:{command};\r\n".encode())
         if data.startswith(b"CMD:SET:") and self.respond_to_sets:
             coordinates = data.removeprefix(b"CMD:SET:").removesuffix(b";")
-            yaw, pitch = (float(value) for value in coordinates.split(b","))
-            self.emit_internal_position(yaw=yaw, pitch=pitch)
+            pan, tilt = (float(value) for value in coordinates.split(b","))
+            self.emit_internal_position(pan=pan, tilt=tilt)
         elif data.startswith(b"CMD:MOV:") and self.respond_to_moves:
             coordinates = data.removeprefix(b"CMD:MOV:").removesuffix(b";")
-            yaw, pitch = (float(value) for value in coordinates.split(b","))
-            self.emit_internal_position(yaw=yaw, pitch=pitch)
+            pan, tilt = (float(value) for value in coordinates.split(b","))
+            self.emit_internal_position(pan=pan, tilt=tilt)
         elif data.startswith(b"CMD:MOV_CNT:PAN=") and self.respond_to_moves:
             values = data.removeprefix(b"CMD:MOV_CNT:PAN=").removesuffix(b";")
             pan, tilt = values.split(b",TILT=")
-            yaw = (int(pan) - 50000) / 240
-            pitch = (int(tilt) - 30000) / 240
-            self.emit_internal_position(yaw=yaw, pitch=pitch)
+            pan = (int(pan) - 50000) / 240
+            tilt = (int(tilt) - 30000) / 240
+            self.emit_internal_position(pan=pan, tilt=tilt)
         elif data == b"CMD:VERSION;" and self.firmware_version is not None:
             self.emit(f"MSG:VERSION:{self.firmware_version};\r\n".encode())
         elif data == b"CMD:CNT;":
@@ -87,8 +87,8 @@ class FakeSerial:
         with self._lock:
             self._input.extend(message)
 
-    def emit_internal_position(self, *, yaw, pitch):
-        self.emit(f"MSG:POS:PAN={yaw:.3f},TILT={pitch:.3f}\r\n".encode())
+    def emit_internal_position(self, *, pan, tilt):
+        self.emit(f"MSG:POS:PAN={pan:.3f},TILT={tilt:.3f}\r\n".encode())
 
 
 def wait_for(predicate, *, timeout=1.0):
@@ -122,12 +122,12 @@ def test_received_messages_are_immutable_and_hashable():
 
     assert isinstance(event, turntable2.ReceivedMessagePosition)
     assert event.kind == "position"
-    assert event.yaw == -123.456
-    assert event.pitch == 87.654
+    assert event.pan == -123.456
+    assert event.tilt == 87.654
     assert event.timestamp.tzinfo is not None
     assert hash(event)
     with pytest.raises(ValidationError):
-        event.yaw = 0
+        event.pan = 0
 
 
 def test_non_position_input_becomes_an_other_event():
@@ -258,8 +258,8 @@ def test_serial_listener_frames_fragmented_lines():
 
         event = wait_for(lambda: turntable.most_recent_event(kind="position"))
 
-        assert event.yaw == -5.67
-        assert event.pitch == 12.34
+        assert event.pan == -5.67
+        assert event.tilt == 12.34
         assert turntable.most_recent_event(kind="other").message == b"junk\r\n"
     finally:
         turntable.close()
@@ -283,7 +283,7 @@ def test_set_and_move_are_queued_with_direct_coordinates():
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=4, pitch=2)
+        fake.emit_internal_position(pan=4, tilt=2)
         wait_for(lambda: turntable.current_position() is not None)
 
         assert turntable.current_state() == turntable2.TurntableState.NOT_SET
@@ -295,7 +295,7 @@ def test_set_and_move_are_queued_with_direct_coordinates():
         assert b"CMD:SET:0.000,0.000;" in fake.writes
         assert b"CMD:MOV:15.000,-40.000;" in fake.writes
         assert not any(write.startswith(b"CMD:SET:") and write != b"CMD:SET:0.000,0.000;" for write in fake.writes)
-        assert turntable.most_recent_event(kind="position").pitch == -40
+        assert turntable.most_recent_event(kind="position").tilt == -40
         command_history = turntable.command_history()
         assert [write.command for write in command_history] == fake.writes
         assert all(write.timestamp.tzinfo is not None for write in command_history)
@@ -305,21 +305,21 @@ def test_set_and_move_are_queued_with_direct_coordinates():
         )
 
         complete_state = turntable.get_complete_state()
-        assert complete_state.uncorrected_position == turntable2.YawPitch(yaw=15, pitch=-40)
+        assert complete_state.uncorrected_position == turntable2.PanTilt(pan=15, tilt=-40)
         assert complete_state.corrected_position == turntable2.PanTilt(pan=15, tilt=-40)
-        assert complete_state.most_recent_position_event.pitch == -40
+        assert complete_state.most_recent_position_event.tilt == -40
         assert complete_state.activity == turntable2.TurntableActivity.IDLE
         assert complete_state.activity_timeout_at is None
         assert complete_state.position_history_count == len(turntable.position_history())
         assert complete_state.position_history_generation == 1
         assert turntable.position_history()[-1] == turntable2.PositionSample(
             timestamp=complete_state.most_recent_position_event.timestamp,
-            internal_position=turntable2.YawPitch(yaw=15, pitch=-40),
+            internal_position=turntable2.PanTilt(pan=15, tilt=-40),
             corrected_position=turntable2.PanTilt(pan=15, tilt=-40),
         )
-        assert all(sample.internal_position.yaw == sample.corrected_position.pan for sample in turntable.position_history())
-        assert all(sample.internal_position.pitch == sample.corrected_position.tilt for sample in turntable.position_history())
-        assert all(sample.internal_position != turntable2.YawPitch(yaw=4, pitch=2) for sample in turntable.position_history())
+        assert all(sample.internal_position.pan == sample.corrected_position.pan for sample in turntable.position_history())
+        assert all(sample.internal_position.tilt == sample.corrected_position.tilt for sample in turntable.position_history())
+        assert all(sample.internal_position != turntable2.PanTilt(pan=4, tilt=2) for sample in turntable.position_history())
     finally:
         turntable.close()
 
@@ -347,7 +347,7 @@ def test_confirm_trusts_the_current_position_without_sending_set():
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=4, pitch=2)
+        fake.emit_internal_position(pan=4, tilt=2)
         wait_for(lambda: turntable.current_position() is not None)
 
         turntable.confirm_position()
@@ -368,7 +368,7 @@ def test_estimate_time_uses_the_slower_concurrent_axis_without_timeout_margin():
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_position() is not None)
 
         # Pan estimate: 0.3940 * 10 + 1.2141 = 5.1541 seconds.
@@ -425,7 +425,7 @@ def test_queued_move_estimates_timeout_from_position_when_it_starts():
         turntable.move_to(pan=-180, tilt=0)
         wait_for(lambda: b"CMD:MOV:180.000,0.000;" in fake.writes)
 
-        fake.emit_internal_position(yaw=180, pitch=0)
+        fake.emit_internal_position(pan=180, tilt=0)
         wait_for(lambda: b"CMD:MOV:-180.000,0.000;" in fake.writes)
         state = turntable.get_complete_state()
         actual_timeout = (state.activity_timeout_at - state.captured_at).total_seconds()
@@ -440,7 +440,7 @@ def test_complete_state_describes_active_move_and_timeout():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
 
@@ -451,15 +451,15 @@ def test_complete_state_describes_active_move_and_timeout():
         assert complete_state.state == turntable2.TurntableState.MOVING
         assert complete_state.activity == turntable2.TurntableActivity.MOVING
         assert complete_state.activity_phase == "direct"
-        assert complete_state.uncorrected_position == turntable2.YawPitch(yaw=0, pitch=0)
+        assert complete_state.uncorrected_position == turntable2.PanTilt(pan=0, tilt=0)
         assert complete_state.corrected_position == turntable2.PanTilt(pan=0, tilt=0)
-        assert complete_state.most_recent_position_event.yaw == 0
-        assert complete_state.most_recent_position_event.pitch == 0
+        assert complete_state.most_recent_position_event.pan == 0
+        assert complete_state.most_recent_position_event.tilt == 0
         assert complete_state.activity_timeout_at.tzinfo is not None
         assert complete_state.activity_timeout_at > complete_state.captured_at
         assert complete_state.communication_timeout == 1.0
         assert complete_state.target_position == turntable2.PanTilt(pan=10, tilt=5)
-        assert complete_state.internal_target == turntable2.YawPitch(yaw=10, pitch=5)
+        assert complete_state.internal_target == turntable2.PanTilt(pan=10, tilt=5)
         assert complete_state.queued_command_count == 0
         assert complete_state.has_been_set
         assert not complete_state.set_requested
@@ -475,7 +475,7 @@ def test_move_does_not_send_intermediate_move_or_set_commands():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
 
@@ -485,7 +485,7 @@ def test_move_does_not_send_intermediate_move_or_set_commands():
 
         complete_state = turntable.get_complete_state()
         assert complete_state.target_position == turntable2.PanTilt(pan=15, tilt=-40)
-        assert complete_state.internal_target == turntable2.YawPitch(yaw=15, pitch=-40)
+        assert complete_state.internal_target == turntable2.PanTilt(pan=15, tilt=-40)
         assert fake.writes[writes_before_move:] == [b"CMD:MOV:15.000,-40.000;"]
     finally:
         turntable.close()
@@ -495,11 +495,11 @@ def test_move_does_not_send_intermediate_move_or_set_commands():
     "destination",
     [-90, 45],
 )
-def test_move_uses_direct_coordinates_across_full_elevation_range(destination):
+def test_move_uses_direct_coordinates_across_full_tilt_range(destination):
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         turntable.move_to(pan=12, tilt=destination)
 
@@ -589,7 +589,7 @@ def test_complete_state_describes_active_nonzero_set():
 
         state = turntable.get_complete_state()
         assert state.target_position == turntable2.PanTilt(20, 10)
-        assert state.internal_target == turntable2.YawPitch(20, 10)
+        assert state.internal_target == turntable2.PanTilt(20, 10)
     finally:
         turntable.close()
 
@@ -598,7 +598,7 @@ def test_abort_stops_the_active_move_and_cancels_queued_moves():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         turntable.move_to(pan=10, tilt=0)
@@ -661,7 +661,7 @@ def test_raw_command_is_written_once_without_coordinate_validation():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         writes_before_raw = len(fake.writes)
@@ -684,7 +684,7 @@ def test_version_request_is_written_once_and_preserves_trusted_position():
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         writes_before_request = len(fake.writes)
@@ -707,7 +707,7 @@ def test_counter_request_is_written_once_and_preserves_trusted_position():
     fake = FakeSerial(counters=(12345, 5555))
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         writes_before_request = len(fake.writes)
@@ -729,7 +729,7 @@ def test_counter_set_is_written_once_and_invalidates_trusted_position():
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         writes_before_set = len(fake.writes)
@@ -765,7 +765,7 @@ def test_counter_set_waits_behind_an_active_move():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         turntable.move_to(pan=10, tilt=0)
@@ -775,7 +775,7 @@ def test_counter_set_waits_behind_an_active_move():
         time.sleep(0.03)
         assert b"CMD:SET_CNT:PAN=12345,TILT=5555;" not in fake.writes
 
-        fake.emit_internal_position(yaw=10, pitch=0)
+        fake.emit_internal_position(pan=10, tilt=0)
         wait_for(lambda: b"CMD:SET_CNT:PAN=12345,TILT=5555;" in fake.writes)
     finally:
         turntable.close()
@@ -785,7 +785,7 @@ def test_counter_move_is_sent_once_after_ack_and_tracks_translated_target():
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_position() is not None)
         writes_before_move = len(fake.writes)
 
@@ -804,7 +804,7 @@ def test_counter_move_uses_300_second_default_timeout():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_position() is not None)
 
         turntable.move_to_counters(pan=52_400, tilt=28_800)
@@ -812,7 +812,7 @@ def test_counter_move_uses_300_second_default_timeout():
         snapshot = wait_for(lambda: state if (state := turntable.get_complete_state()).activity_phase == "counter" else None)
         remaining = (snapshot.activity_timeout_at - snapshot.captured_at).total_seconds()
         assert remaining == pytest.approx(300, abs=1)
-        assert snapshot.internal_target == turntable2.YawPitch(10, -5)
+        assert snapshot.internal_target == turntable2.PanTilt(10, -5)
     finally:
         turntable.close()
 
@@ -821,7 +821,7 @@ def test_command_is_retried_only_while_acknowledgement_is_missing():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake, command_repetitions=3)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         fake.acknowledge_commands = False
@@ -843,7 +843,7 @@ def test_matching_nak_fails_move_without_retry_and_stops_motion():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake, command_repetitions=3)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         fake.acknowledge_commands = False
@@ -866,13 +866,13 @@ def test_position_discontinuity_error_stops_and_invalidates_position():
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         writes_before_error = len(fake.writes)
 
         fake.emit(b"MSG:ERR:POSITION_DISCONTINUITY;\r\n")
-        fake.emit_internal_position(yaw=5, pitch=0)
+        fake.emit_internal_position(pan=5, tilt=0)
 
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.ERROR)
         assert fake.writes[writes_before_error:] == [b"p"] * 5
@@ -889,7 +889,7 @@ def test_unmatched_acknowledgement_does_not_release_pending_command():
     fake = FakeSerial(respond_to_moves=False, acknowledge_commands=False)
     turntable = make_turntable(fake, command_repetitions=2)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0, timeout=1)
         wait_for(lambda: b"CMD:SET:0.000,0.000;" in fake.writes)
         fake.emit(b"MSG:ACK:MOV;\r\n")
@@ -917,7 +917,7 @@ def test_raw_command_waits_behind_a_tracked_move():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         turntable.move_to(pan=10, tilt=0)
@@ -927,7 +927,7 @@ def test_raw_command_waits_behind_a_tracked_move():
         time.sleep(0.03)
         assert b"diagnostic;" not in fake.writes
 
-        fake.emit_internal_position(yaw=10, pitch=0)
+        fake.emit_internal_position(pan=10, tilt=0)
         wait_for(lambda: b"diagnostic;" in fake.writes)
     finally:
         turntable.close()
@@ -937,7 +937,7 @@ def test_move_timeout_aborts_and_is_observable():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake, communication_timeout=1.0)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
 
@@ -961,7 +961,7 @@ def test_set_timeout_cancels_a_move_queued_behind_it():
     fake.write = ignore_commands
     turntable = make_turntable(fake, communication_timeout=1.0)
     try:
-        fake.emit_internal_position(yaw=5, pitch=5)
+        fake.emit_internal_position(pan=5, tilt=5)
         wait_for(lambda: turntable.current_position() is not None)
         turntable.set_position(pan=0, tilt=0, timeout=0.03)
         turntable.move_to(pan=10, tilt=0)
@@ -977,7 +977,7 @@ def test_communication_timeout_resets_controller_to_not_set():
     fake = FakeSerial()
     turntable = make_turntable(fake, communication_timeout=0.03)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
 
@@ -985,7 +985,7 @@ def test_communication_timeout_resets_controller_to_not_set():
         with pytest.raises(turntable2.TurntableError, match="must be set"):
             turntable.move_to(pan=0, tilt=0)
 
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.NOT_SET)
     finally:
         turntable.close()
@@ -995,7 +995,7 @@ def test_communication_loss_during_move_sends_default_stop_repetitions():
     fake = FakeSerial(respond_to_moves=False)
     turntable = make_turntable(fake, communication_timeout=0.05)
     try:
-        fake.emit_internal_position(yaw=0, pitch=0)
+        fake.emit_internal_position(pan=0, tilt=0)
         turntable.set_position(pan=0, tilt=0)
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
 

@@ -10,7 +10,6 @@ from textual.widgets import Static
 from anechoic_turntable import PanTilt
 from anechoic_turntable import TurntableActivity
 from anechoic_turntable import TurntableState
-from anechoic_turntable import YawPitch
 from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessageAcknowledgement
@@ -42,8 +41,8 @@ class FakeTurntable:
             *(
                 ReceivedMessagePosition(
                     message=f"MSG:POS:PAN={index:.3f},TILT=-3.000\r\n".encode(),
-                    yaw=float(index),
-                    pitch=-3.0,
+                    pan=float(index),
+                    tilt=-3.0,
                 )
                 for index in range(1, 7)
             ),
@@ -55,7 +54,7 @@ class FakeTurntable:
             state=TurntableState.STOPPED,
             activity=TurntableActivity.IDLE,
             activity_phase=None,
-            uncorrected_position=YawPitch(2.0, -3.0),
+            uncorrected_position=PanTilt(2.0, -3.0),
             corrected_position=PanTilt(12.0, 5.0),
             target_position=None,
             recent_events=self.receive_events,
@@ -140,8 +139,8 @@ def test_tui_connects_updates_state_and_queues_commands():
             assert rendered_text(app.query_one("#state-status", Static)) == "STOPPED"
             assert app.query_one("#state-status", Static).has_class("status-safe")
             assert rendered_text(app.query_one("#position-status", Static)) == "SET"
-            assert rendered_text(app.query_one("#azimuth", Static)) == "pan: 12.000°"
-            assert rendered_text(app.query_one("#elevation", Static)) == "tilt: 5.000°"
+            assert rendered_text(app.query_one("#pan", Static)) == "pan: 12.000°"
+            assert rendered_text(app.query_one("#tilt", Static)) == "tilt: 5.000°"
             assert "PAN=6.000" in rendered_text(app.query_one("#serial-raw", Static))
             assert "version: 1.2.3" in rendered_text(app.query_one("#serial-parsed", Static))
             assert "position:" not in rendered_text(app.query_one("#serial-parsed", Static))
@@ -327,7 +326,7 @@ def test_tui_expands_data_panels_and_preserves_button_labels():
                 assert str(button.label) == label
 
             for prefix in ("move", "set"):
-                input_region = app.query_one(f"#{prefix}-az", Input).region
+                input_region = app.query_one(f"#{prefix}-pan", Input).region
                 button_region = app.query_one(f"#{prefix}-submit", Button).region
                 assert input_region.height == 3
                 assert input_region.bottom == button_region.y
@@ -384,14 +383,14 @@ def test_tui_move_set_and_filter_controls():
 
         async with app.run_test(size=(120, 40)) as pilot:
             submit(app, "connect")
-            app.query_one("#move-az", Input).value = "12.5"
-            app.query_one("#move-el", Input).value = "-4"
+            app.query_one("#move-pan", Input).value = "12.5"
+            app.query_one("#move-tilt", Input).value = "-4"
             app.query_one("#move-timeout", Input).value = "30"
             await pilot.click("#move-submit")
             await pilot.click("#move-home")
 
-            app.query_one("#set-az", Input).value = "3"
-            app.query_one("#set-el", Input).value = "2"
+            app.query_one("#set-pan", Input).value = "3"
+            app.query_one("#set-tilt", Input).value = "2"
             app.query_one("#set-timeout", Input).value = "9"
             await pilot.click("#set-submit")
             await pilot.click("#set-confirm")

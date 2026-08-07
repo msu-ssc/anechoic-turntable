@@ -71,19 +71,19 @@ def test_counter_commands_use_exact_frames_and_existing_degree_targets() -> None
     assert '"CMD:MOV_CNT:PAN="' in main_source
     assert '"CMD:SET_CNT:PAN="' in main_source
     assert '"CMD:CNT:PAN="' not in main_source
-    assert "uint32_t azimuthZeroDegreeCounter = 50000;" in main_source
-    assert "uint32_t elevationZeroDegreeCounter = 30000;" in main_source
-    assert "return ((float)counter - (float)azimuthZeroDegreeCounter) / azimuthCountsPerDegree;" in main_source
-    assert "return ((float)counter - (float)elevationZeroDegreeCounter) / elevationCountsPerDegree;" in main_source
-    assert "move_yaw = azimuthCounterToDegrees(azimuth_counter);" in main_source
-    assert "move_pitch = elevationCounterToDegrees(elevation_counter);" in main_source
-    assert "TIM1->CNT = elevationDegreesToCounter(settimer2);" in main_source
-    assert "TIM2->CNT = azimuthDegreesToCounter(settimer1);" in main_source
+    assert "uint32_t panZeroDegreeCounter = 50000;" in main_source
+    assert "uint32_t tiltZeroDegreeCounter = 30000;" in main_source
+    assert "return ((float)counter - (float)panZeroDegreeCounter) / panCountsPerDegree;" in main_source
+    assert "return ((float)counter - (float)tiltZeroDegreeCounter) / tiltCountsPerDegree;" in main_source
+    assert "move_pan = panCounterToDegrees(pan_counter);" in main_source
+    assert "move_tilt = tiltCounterToDegrees(tilt_counter);" in main_source
+    assert "TIM1->CNT = tiltDegreesToCounter(settimer2);" in main_source
+    assert "TIM2->CNT = panDegreesToCounter(settimer1);" in main_source
     assert "case COMMAND_MOV_CNT:" in main_source
     assert "case COMMAND_MOV:" in main_source
 
 
-def test_firmware_uses_expanded_elevation_counter_period() -> None:
+def test_firmware_uses_expanded_tilt_counter_period() -> None:
     """Generated firmware and Cube configuration use the same TIM1 period."""
 
     main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
@@ -123,5 +123,5 @@ def test_firmware_stops_on_position_discontinuity() -> None:
     assert "position_discontinuity_baseline_valid && move" in main_source
     assert "change > maximum_change" in main_source
     assert '"MSG:ERR:POSITION_DISCONTINUITY;\\r\\n"' in main_source
-    assert "previous_azimuth_counter = TIM2->CNT;" in main_source
-    assert "previous_elevation_counter = TIM1->CNT;" in main_source
+    assert "previous_pan_counter = TIM2->CNT;" in main_source
+    assert "previous_tilt_counter = TIM1->CNT;" in main_source

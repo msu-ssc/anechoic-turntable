@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
-_POSITION_PATTERN = re.compile(rb"MSG:POS:PAN=(?P<yaw>-?\d{1,3}\.\d{3}),TILT=(?P<pitch>-?\d{1,3}\.\d{3})\r\n\Z")
+_POSITION_PATTERN = re.compile(rb"MSG:POS:PAN=(?P<pan>-?\d{1,3}\.\d{3}),TILT=(?P<tilt>-?\d{1,3}\.\d{3})\r\n\Z")
 _VERSION_PATTERN = re.compile(rb"MSG:VERSION:(?P<version>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*));\r\n\Z")
 _COUNTER_PATTERN = re.compile(rb"MSG:CNT:PAN=(?P<pan>0|[1-9]\d*),TILT=(?P<tilt>0|[1-9]\d*);\r\n\Z")
 _ACK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|VERSION|CNT|EMERGENCY_STOP)"
@@ -38,16 +38,11 @@ class ReceivedMessage(BaseModel):
 
 
 class ReceivedMessagePosition(ReceivedMessage):
-    """A raw position report containing the firmware's relative coordinates.
-
-    The firmware labels these values ``PAN`` and ``TILT`` on the wire. Within
-    the controller they remain yaw and pitch to distinguish raw firmware state
-    from the physical pan and tilt used by the public API.
-    """
+    """A raw position report containing firmware pan and tilt coordinates."""
 
     kind: Literal["position"] = "position"
-    yaw: float | None = None
-    pitch: float | None = None
+    pan: float | None = None
+    tilt: float | None = None
 
 
 class ReceivedMessageVersion(ReceivedMessage):
@@ -135,14 +130,14 @@ def parse_received_message(
         return ReceivedMessage(message=message, timestamp=timestamp)
 
     try:
-        yaw = float(match.group("yaw"))
-        pitch = float(match.group("pitch"))
+        pan = float(match.group("pan"))
+        tilt = float(match.group("tilt"))
     except (TypeError, ValueError):
         return ReceivedMessage(message=message, timestamp=timestamp)
 
     return ReceivedMessagePosition(
         message=message,
         timestamp=timestamp,
-        yaw=yaw,
-        pitch=pitch,
+        pan=pan,
+        tilt=tilt,
     )
