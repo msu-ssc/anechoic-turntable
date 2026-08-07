@@ -78,3 +78,7 @@ Firmware can now detect and handle
 ## 3.1.1 — 2026-08-07
 
 Fixed the maximum and minimum values for the tilt.
+
+## 3.1.2 — 2026-08-07
+
+Modify firmware angle determination calculations to allow "wiggle room" near -180 degrees pan and -90 degrees tilt, so as to avoid underflowing if a movement to an extreme coordinate overshoots slightly.
