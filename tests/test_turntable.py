@@ -173,12 +173,13 @@ def test_counter_response_becomes_a_typed_event():
     assert hash(event)
 
 
-def test_position_discontinuity_becomes_a_typed_error_event():
-    event = turntable2.parse_received_message(b"MSG:ERR:POSITION_DISCONTINUITY;\r\n")
+@pytest.mark.parametrize("reason", ["POSITION_DISCONTINUITY", "MOVEMENT_TIMEOUT"])
+def test_firmware_safety_error_becomes_a_typed_error_event(reason):
+    event = turntable2.parse_received_message(f"MSG:ERR:{reason};\r\n".encode())
 
     assert isinstance(event, turntable2.ReceivedMessageError)
     assert event.kind == "error"
-    assert event.reason == "POSITION_DISCONTINUITY"
+    assert event.reason == reason
     assert hash(event)
 
 
@@ -863,7 +864,8 @@ def test_matching_nak_fails_move_without_retry_and_stops_motion():
         turntable.close()
 
 
-def test_position_discontinuity_error_stops_and_invalidates_position():
+@pytest.mark.parametrize("reason", ["POSITION_DISCONTINUITY", "MOVEMENT_TIMEOUT"])
+def test_firmware_safety_error_stops_and_invalidates_position(reason):
     fake = FakeSerial()
     turntable = make_turntable(fake)
     try:
@@ -872,14 +874,14 @@ def test_position_discontinuity_error_stops_and_invalidates_position():
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.STOPPED)
         writes_before_error = len(fake.writes)
 
-        fake.emit(b"MSG:ERR:POSITION_DISCONTINUITY;\r\n")
+        fake.emit(f"MSG:ERR:{reason};\r\n".encode())
         fake.emit_internal_position(pan=5, tilt=0)
 
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.ERROR)
         assert fake.writes[writes_before_error:] == [b"p"] * 5
         assert turntable.current_position() is not None
         assert turntable.get_complete_state().has_been_set is False
-        assert "Firmware reported POSITION_DISCONTINUITY" in str(turntable.last_error())
+        assert f"Firmware reported {reason}" in str(turntable.last_error())
         event = turntable.most_recent_event(kind="error")
         assert isinstance(event, turntable2.ReceivedMessageError)
     finally:

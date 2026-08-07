@@ -17,7 +17,7 @@ _ACK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|VERSION|CNT|EMERGENCY_STOP)"
 _NAK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|VERSION|CNT|EMERGENCY_STOP|UNKNOWN)"
 _ACKNOWLEDGEMENT_PATTERN = re.compile(rb"MSG:(?P<status>ACK):(?P<command>" + _ACK_COMMAND_NAME + rb");\r\n\Z")
 _NEGATIVE_ACKNOWLEDGEMENT_PATTERN = re.compile(rb"MSG:(?P<status>NAK):(?P<command>" + _NAK_COMMAND_NAME + rb"),(?P<reason>UNABLE_TO_PARSE|REJECTED|OUT_OF_BOUNDS);\r\n\Z")
-_ERROR_PATTERN = re.compile(rb"MSG:ERR:(?P<reason>POSITION_DISCONTINUITY);\r\n\Z")
+_ERROR_PATTERN = re.compile(rb"MSG:ERR:(?P<reason>POSITION_DISCONTINUITY|MOVEMENT_TIMEOUT);\r\n\Z")
 _UINT32_MAX = 2**32 - 1
 
 CommandName = Literal["SET", "MOV", "MOV_CNT", "SET_CNT", "VERSION", "CNT", "EMERGENCY_STOP", "UNKNOWN"]
@@ -73,7 +73,7 @@ class ReceivedMessageError(ReceivedMessage):
     """An asynchronous safety error reported by firmware."""
 
     kind: Literal["error"] = "error"
-    reason: Literal["POSITION_DISCONTINUITY"]
+    reason: Literal["POSITION_DISCONTINUITY", "MOVEMENT_TIMEOUT"]
 
 
 def parse_received_message(

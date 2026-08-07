@@ -34,6 +34,11 @@ immediately stops both motors and emits
 `MSG:ERR:POSITION_DISCONTINUITY;` followed by CRLF. SET and SET_CNT reset the
 comparison baseline after their intentional counter changes.
 
+Each MOV or MOV_CNT operation also has a firmware-enforced 300-second deadline.
+If a new movement target remains active beyond that deadline, firmware stops
+both motors and emits `MSG:ERR:MOVEMENT_TIMEOUT;` followed by CRLF. A repeated
+copy of the same active movement command does not restart the deadline.
+
 `CMD:MOV_CNT:PAN=<pan-counter>,TILT=<tilt-counter>;` converts the supplied
 counters to degrees using the configured zero counts and `240` counts per
 degree, then runs the existing degree-based movement logic. It is a diagnostic

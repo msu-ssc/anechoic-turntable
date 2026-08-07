@@ -414,6 +414,19 @@ do not produce this error. On receiving the error, the controller MUST send an
 immediate stop, invalidate its trusted position and pending work, and enter
 `ERROR`.
 
+Firmware MUST limit each MOV or MOV_CNT operation to 300 seconds, measured from
+acceptance of a new movement target. Repetition of the same active target MUST
+NOT restart this deadline. If the target has not been reached when the deadline
+expires, firmware MUST immediately stop both motors, cancel the active move,
+and emit exactly:
+
+```text
+MSG:ERR:MOVEMENT_TIMEOUT;\r\n
+```
+
+On receiving this error, the controller MUST send an immediate stop, invalidate
+its trusted position and pending work, and enter `ERROR`.
+
 ## Reporting cadence and discovery
 
 The exact position-report frequency is not fixed, but valid reports MUST arrive

@@ -68,4 +68,6 @@ static const uint32_t MAIN_LOOP_DELAY_MS = 5U;
 /** Maximum blocking time for one UART transmit, in milliseconds. */
 static const uint32_t UART_TRANSMIT_TIMEOUT_MS = 1000U;
 
+/** Maximum time an accepted movement command may remain active. */
+static const uint32_t MOVEMENT_TIMEOUT_MS = 300000U;
 #endif /* GLOBALVARS_H_ */
