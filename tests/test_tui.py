@@ -15,6 +15,7 @@ from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
+from anechoic_turntable.messages import ReceivedMessageError
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.tui import CommandInput
@@ -249,6 +250,15 @@ def test_tui_formats_negative_acknowledgement_status():
     )
 
     assert TurntableTui._format_parsed_event(event) == "nak: MOV (REJECTED)"
+
+
+def test_tui_formats_position_discontinuity_error():
+    event = ReceivedMessageError(
+        message=b"MSG:ERR:POSITION_DISCONTINUITY;\r\n",
+        reason="POSITION_DISCONTINUITY",
+    )
+
+    assert TurntableTui._format_parsed_event(event) == "error: POSITION_DISCONTINUITY"
 
 
 def test_tui_rejects_malformed_counter_commands():

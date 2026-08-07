@@ -1,5 +1,5 @@
 # Turntable Firmware–Controller Protocol Contract
-PROTOCOL_VERSION=3.1.0
+PROTOCOL_VERSION=3.2.0
 
 This document is the authoritative contract between the STM32 turntable
 firmware and the Python controller. If an implementation differs from this
@@ -143,7 +143,7 @@ The controller accepts public SET values within:
 - tilt/pitch: `[-90.0, 90.0]` degrees.
 
 Firmware MUST reject an otherwise well-formed SET outside these inclusive
-bounds with `REJECTED` and MUST NOT change either counter.
+bounds with `OUT_OF_BOUNDS` and MUST NOT change either counter.
 
 ### MOV
 
@@ -163,7 +163,7 @@ The controller accepts physical move requests within:
 - tilt: `[-90.0, 45.0]` degrees.
 
 Firmware MUST reject an otherwise well-formed MOV outside these inclusive
-bounds with `REJECTED` and MUST NOT begin that movement.
+bounds with `OUT_OF_BOUNDS` and MUST NOT begin that movement.
 
 The controller sends those requested values directly as yaw and pitch. Firmware
 used with this controller MUST represent the complete range without relying on
@@ -302,9 +302,11 @@ one of:
 
 - `UNABLE_TO_PARSE`: the command was malformed, incomplete, oversized, or
   unknown;
+- `OUT_OF_BOUNDS`: an otherwise well-formed SET or MOV contained a coordinate
+  outside its inclusive firmware bounds;
 - `REJECTED`: the complete command was understood but was not accepted, for
-  example because coordinates were outside firmware bounds or another complete
-  frame could not be queued.
+  example because an emergency stop cancelled it or another complete frame
+  could not be queued.
 
 An ACK means the complete command was received, parsed, accepted, and applied.
 For VERSION, CNT, and SET_CNT, firmware MUST send the ACK before the command's
@@ -402,6 +404,24 @@ diagnostic/other events.
 
 Only a valid position report counts as live firmware communication. Arbitrary
 diagnostic output does not reset the controller's communication timeout.
+
+## Firmware-to-controller safety errors
+
+While movement is active, firmware compares each azimuth and elevation encoder
+counter with the value sampled during the previous main-loop iteration. A
+change of 240 counts or less on either axis is allowed. If either counter
+changes by more than 240 counts, firmware MUST immediately stop both motors,
+cancel the active move, and emit exactly:
+
+```text
+MSG:ERR:POSITION_DISCONTINUITY;\r\n
+```
+
+Successful SET and SET_CNT commands MUST reset the previous-counter baseline
+after changing the counters, so their intentional coordinate discontinuities
+do not produce this error. On receiving the error, the controller MUST send an
+immediate stop, invalidate its trusted position and pending work, and enter
+`ERROR`.
 
 ## Reporting cadence and discovery
 

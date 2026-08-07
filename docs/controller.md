@@ -175,6 +175,9 @@ Successfully parsed position lines become `ReceivedMessagePosition` events.
 Exact firmware version responses become `ReceivedMessageVersion` events, and
 exact encoder-counter responses become `ReceivedMessageCounter` events.
 Exact ACK and NAK frames become `ReceivedMessageAcknowledgement` events.
+The exact `MSG:ERR:POSITION_DISCONTINUITY;` safety report becomes a
+`ReceivedMessageError` event. The controller responds by sending an immediate
+stop, invalidating pending work and its trusted position, and entering `ERROR`.
 These events intentionally preserve raw firmware yaw and pitch. Use
 `current_position()` or `get_complete_state().corrected_position` for physical
 pan and tilt.

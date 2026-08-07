@@ -16,7 +16,8 @@ _COUNTER_PATTERN = re.compile(rb"MSG:CNT:PAN=(?P<pan>0|[1-9]\d*),TILT=(?P<tilt>0
 _ACK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|VERSION|CNT|EMERGENCY_STOP)"
 _NAK_COMMAND_NAME = rb"(?:SET|MOV|MOV_CNT|SET_CNT|VERSION|CNT|EMERGENCY_STOP|UNKNOWN)"
 _ACKNOWLEDGEMENT_PATTERN = re.compile(rb"MSG:(?P<status>ACK):(?P<command>" + _ACK_COMMAND_NAME + rb");\r\n\Z")
-_NEGATIVE_ACKNOWLEDGEMENT_PATTERN = re.compile(rb"MSG:(?P<status>NAK):(?P<command>" + _NAK_COMMAND_NAME + rb"),(?P<reason>UNABLE_TO_PARSE|REJECTED);\r\n\Z")
+_NEGATIVE_ACKNOWLEDGEMENT_PATTERN = re.compile(rb"MSG:(?P<status>NAK):(?P<command>" + _NAK_COMMAND_NAME + rb"),(?P<reason>UNABLE_TO_PARSE|REJECTED|OUT_OF_BOUNDS);\r\n\Z")
+_ERROR_PATTERN = re.compile(rb"MSG:ERR:(?P<reason>POSITION_DISCONTINUITY);\r\n\Z")
 _UINT32_MAX = 2**32 - 1
 
 CommandName = Literal["SET", "MOV", "MOV_CNT", "SET_CNT", "VERSION", "CNT", "EMERGENCY_STOP", "UNKNOWN"]
@@ -31,7 +32,7 @@ class ReceivedMessage(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    kind: Literal["position", "version", "counter", "acknowledgement", "other"] = "other"
+    kind: Literal["position", "version", "counter", "acknowledgement", "error", "other"] = "other"
     message: bytes
     timestamp: datetime.datetime = Field(default_factory=_utc_now)
 
@@ -70,7 +71,14 @@ class ReceivedMessageAcknowledgement(ReceivedMessage):
     kind: Literal["acknowledgement"] = "acknowledgement"
     status: Literal["ACK", "NAK"]
     command: CommandName
-    reason: Literal["UNABLE_TO_PARSE", "REJECTED"] | None = None
+    reason: Literal["UNABLE_TO_PARSE", "REJECTED", "OUT_OF_BOUNDS"] | None = None
+
+
+class ReceivedMessageError(ReceivedMessage):
+    """An asynchronous safety error reported by firmware."""
+
+    kind: Literal["error"] = "error"
+    reason: Literal["POSITION_DISCONTINUITY"]
 
 
 def parse_received_message(
@@ -92,6 +100,14 @@ def parse_received_message(
             status=acknowledgement_match.group("status").decode("ascii"),
             command=acknowledgement_match.group("command").decode("ascii"),
             reason=None if reason is None else reason.decode("ascii"),
+        )
+
+    error_match = _ERROR_PATTERN.fullmatch(message)
+    if error_match is not None:
+        return ReceivedMessageError(
+            message=message,
+            timestamp=timestamp,
+            reason=error_match.group("reason").decode("ascii"),
         )
 
     version_match = _VERSION_PATTERN.fullmatch(message)

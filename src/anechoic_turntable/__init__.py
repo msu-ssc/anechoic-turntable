@@ -24,6 +24,7 @@ from anechoic_turntable.controller import TurntableState
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
+from anechoic_turntable.messages import ReceivedMessageError
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.messages import parse_received_message
@@ -45,6 +46,7 @@ __all__ = [
     "ReceivedMessage",
     "ReceivedMessageAcknowledgement",
     "ReceivedMessageCounter",
+    "ReceivedMessageError",
     "ReceivedMessagePosition",
     "ReceivedMessageVersion",
     "SerialListener",

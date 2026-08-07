@@ -22,6 +22,7 @@ from anechoic_turntable.controller import TurntableState
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
+from anechoic_turntable.messages import ReceivedMessageError
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
 from anechoic_turntable.positions import PanTilt
@@ -228,6 +229,9 @@ class Turntable:
 
     @overload
     def most_recent_event(self, *, kind: Literal["acknowledgement"]) -> ReceivedMessageAcknowledgement | None: ...
+
+    @overload
+    def most_recent_event(self, *, kind: Literal["error"]) -> ReceivedMessageError | None: ...
 
     @overload
     def most_recent_event(self, *, kind: Literal["other"]) -> ReceivedMessage | None: ...
