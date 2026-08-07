@@ -59,7 +59,7 @@ def test_firmware_version_command_uses_canonical_version_header() -> None:
     main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
 
     assert '#include "firmware_version.h"' in main_source
-    assert 'strcmp(command_to_process, "CMD:VERSION") == 0' in main_source
+    assert 'strcmp(commandToProcess, "CMD:VERSION") == 0' in main_source
     assert '"MSG:VERSION:" FIRMWARE_VERSION ";\\r\\n"' in main_source
 
 
@@ -67,18 +67,19 @@ def test_counter_commands_use_exact_frames_and_existing_degree_targets() -> None
     """Counter commands parse exact fields before entering existing movement."""
 
     main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+    global_constants = (REPOSITORY_ROOT / "firmware/Core/Inc/globalvars.h").read_text(encoding="utf-8")
 
     assert '"CMD:MOV_CNT:PAN="' in main_source
     assert '"CMD:SET_CNT:PAN="' in main_source
     assert '"CMD:CNT:PAN="' not in main_source
-    assert "uint32_t panZeroDegreeCounter = 50000;" in main_source
-    assert "uint32_t tiltZeroDegreeCounter = 30000;" in main_source
-    assert "return ((float)counter - (float)panZeroDegreeCounter) / panCountsPerDegree;" in main_source
-    assert "return ((float)counter - (float)tiltZeroDegreeCounter) / tiltCountsPerDegree;" in main_source
-    assert "requested_pan = panCounterToDegrees(pan_counter);" in main_source
-    assert "requested_tilt = tiltCounterToDegrees(tilt_counter);" in main_source
-    assert "TIM1->CNT = tiltDegreesToCounter(settimer2);" in main_source
-    assert "TIM2->CNT = panDegreesToCounter(settimer1);" in main_source
+    assert "static const uint32_t PAN_ZERO_DEGREE_COUNTER = 50000U;" in global_constants
+    assert "static const uint32_t TILT_ZERO_DEGREE_COUNTER = 30000U;" in global_constants
+    assert "(float)PAN_ZERO_DEGREE_COUNTER" in main_source
+    assert "(float)TILT_ZERO_DEGREE_COUNTER" in main_source
+    assert "requestedPan = panCounterToDegrees(panCounter);" in main_source
+    assert "requestedTilt = tiltCounterToDegrees(tiltCounter);" in main_source
+    assert "TIM1->CNT = tiltDegreesToCounter(setTiltDegrees);" in main_source
+    assert "TIM2->CNT = panDegreesToCounter(setPanDegrees);" in main_source
     assert "case COMMAND_MOV_CNT:" in main_source
     assert "case COMMAND_MOV:" in main_source
 
@@ -107,9 +108,9 @@ def test_firmware_acknowledges_accepted_and_rejected_commands() -> None:
 
     assert '"MSG:ACK:%s;\\r\\n"' in main_source
     assert '"MSG:NAK:%s,%s;\\r\\n"' in main_source
-    assert 'MYPROG_SendAcknowledgement("EMERGENCY_STOP", true, NULL);' in main_source
-    assert 'MYPROG_SendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");' in main_source
-    assert "command_rejected = command_parsed" in main_source
+    assert 'sendAcknowledgement("EMERGENCY_STOP", true, NULL);' in main_source
+    assert 'sendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");' in main_source
+    assert "commandRejected = commandParsed" in main_source
     assert '? "OUT_OF_BOUNDS"' in main_source
 
 
@@ -118,17 +119,17 @@ def test_firmware_resets_completion_state_when_accepting_a_move() -> None:
 
     main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
 
-    assert "float requested_pan = 0.0f;" in main_source
-    assert "float requested_tilt = 0.0f;" in main_source
+    assert "float requestedPan = 0.0f;" in main_source
+    assert "float requestedTilt = 0.0f;" in main_source
     assert "float move_pan = 0.0f;" not in main_source
     assert "float move_tilt = 0.0f;" not in main_source
     movement_activation = re.search(
         r"case COMMAND_MOV:\s+"
-        r"Pan_command = requested_pan;\s+"
-        r"Tilt_command = requested_tilt;\s+"
-        r"move_pan = 0;\s+"
-        r"move_tilt = 0;\s+"
-        r"move = 1;",
+        r"commandedPanDegrees = requestedPan;\s+"
+        r"commandedTiltDegrees = requestedTilt;\s+"
+        r"panTargetReached = false;\s+"
+        r"tiltTargetReached = false;\s+"
+        r"movementActive = true;",
         main_source,
     )
     assert movement_activation is not None
@@ -141,8 +142,32 @@ def test_firmware_stops_on_position_discontinuity() -> None:
     global_variables = (REPOSITORY_ROOT / "firmware/Core/Inc/globalvars.h").read_text(encoding="utf-8")
 
     assert "static const uint32_t MAX_POSITION_CHANGE_COUNTS = 240U;" in global_variables
-    assert "position_discontinuity_baseline_valid && move" in main_source
-    assert "change > maximum_change" in main_source
+    assert "positionDiscontinuityBaselineValid && movementActive" in main_source
+    assert "change > maximumChange" in main_source
     assert '"MSG:ERR:POSITION_DISCONTINUITY;\\r\\n"' in main_source
-    assert "previous_pan_counter = TIM2->CNT;" in main_source
-    assert "previous_tilt_counter = TIM1->CNT;" in main_source
+    assert "previousPanCounter = TIM2->CNT;" in main_source
+    assert "previousTiltCounter = TIM1->CNT;" in main_source
+
+
+def test_firmware_motor_control_uses_documented_named_constants() -> None:
+    """Motor tuning values are named and the old opaque expressions are gone."""
+
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+    global_constants = (REPOSITORY_ROOT / "firmware/Core/Inc/globalvars.h").read_text(encoding="utf-8")
+
+    for constant in (
+        "PAN_PWM_CONTROL_WINDOW_DEG",
+        "PAN_PWM_COEFFICIENT",
+        "PAN_PWM_INTERCEPT",
+        "TILT_PWM_CONTROL_WINDOW_DEG",
+        "TILT_PWM_COEFFICIENT",
+        "TILT_PWM_INTERCEPT",
+        "TARGET_TOLERANCE_DEG",
+        "MAX_PWM_POWER_LEVEL",
+    ):
+        assert constant in global_constants
+        assert constant in main_source
+
+    assert "pan_deviation*78+99" not in main_source
+    assert "tilt_deviation*96+63" not in main_source
+    assert "MYPROG_" not in main_source
