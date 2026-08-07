@@ -23,10 +23,10 @@
 /* USER CODE BEGIN Includes */
 #include "firmware_version.h"
 #include "globalvars.h"
-#include <string.h>
-#include <stdio.h>
-#include <stdbool.h>
 #include <math.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -54,351 +54,31 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
-void MYPROG_motor_control_loop();
-void MYPROG_move_axis(int axis, int speed, int dir);
-void MYPROG_disable_pan();
-void MYPROG_disable_tilt();
+/** Maximum command payload length before the terminating semicolon. */
+enum { RECEIVE_FRAME_CAPACITY = 64 };
 
-//global vars
-int Pan_pos;
-int Tilt_pos;
-
-
-float Pan_pos_deg;
-float Tilt_pos_deg;
-
-int Pan_speed =128;
-int Tilt_speed = 128;
-
-float Pan_command =0;
-float Tilt_command =0;
-
-float command_position_PAN=0;
-float command_position_TILT=0;
-
-int move = 0;
-int move_pan =0;
-int move_tilt = 0;
-
-int mode =0;  // 0 is auto, 1 is manual
-
-char rxBuffer[64];
-// Completed commands are C strings, so they need one extra byte for the null terminator.
-char rxBuffer_command[sizeof(rxBuffer) + 1];
-int buffn =0;
-// Indicates whether rxBuffer_command contains a command waiting for the main loop.
-// volatile tells the compiler that the UART interrupt can change this value at any time.
-volatile int command_read =0;
-uint8_t buff;
-bool discarding_oversized_frame = false;
-volatile uint32_t rejected_frame_count = 0;
-volatile uint32_t unable_to_parse_frame_count = 0;
-// Incremented when the emergency-stop byte ('p') is received, allowing the
-// main loop to recognize and cancel a command copied before the stop.
-volatile uint32_t stop_generation = 0;
-volatile uint32_t emergency_stop_ack_count = 0;
-uint32_t previous_pan_counter = 0;
-uint32_t previous_tilt_counter = 0;
-bool position_discontinuity_baseline_valid = false;
-uint32_t panZeroDegreeCounter = 50000;
-uint32_t tiltZeroDegreeCounter = 30000;
-float panCountsPerDegree = 240.0f;
-float tiltCountsPerDegree = 240.0f;
-static const char firmware_version_message[] = "MSG:VERSION:" FIRMWARE_VERSION ";\r\n";
-static const char position_discontinuity_message[] = "MSG:ERR:POSITION_DISCONTINUITY;\r\n";
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+/** State of the optional legacy keyboard-control path. */
+typedef enum
 {
-  //You need to toggle a breakpoint on this line!
-  //HAL_UART_Transmit(&huart1, rxBuffer, 32, 100);
+    CONTROL_MODE_AUTOMATIC,
+    CONTROL_MODE_MANUAL
+} ControlMode;
 
-  if(buff == 'a')
-  {
-	 // MYPROG_move_axis(1,0xFF,0);
-	  buff = 0;
-	  command_read =0;
-	  mode = 1;
-
-  }else if(buff == 'd')
-  {
-	//  MYPROG_move_axis(1,0xFF,1);
-	  buff = 0;
-	  command_read =0;
-	  mode = 1;
-  }else if(buff == 'w')
-  {
-	//  MYPROG_move_axis(2,0xFF,1);
-	  buff = 0;
-	  command_read =0;
-	  mode = 1;
-  }else if(buff == 's')
-  {
-	//  MYPROG_move_axis(2,0xFF,0);
-	  buff = 0;
-	  command_read =0;
-	  mode = 1;
-  }else if (buff == 'p')
-  {
-	  if (command_read == 1 && rejected_frame_count < UINT32_MAX)
-	  {
-		  rejected_frame_count++;
-	  }
-	  if ((command_read == -1 || buffn > 0 || discarding_oversized_frame) &&
-		  unable_to_parse_frame_count < UINT32_MAX)
-	  {
-		  unable_to_parse_frame_count++;
-	  }
-	  command_read =0;
-	  stop_generation++;
-	  if (emergency_stop_ack_count < UINT32_MAX)
-	  {
-		  emergency_stop_ack_count++;
-	  }
-	  move = 0;
-	  mode = 0;
-	  buff =0;
-	  MYPROG_disable_pan();
-	  MYPROG_disable_tilt();
-
-	  // Example: after "CMD:MOV:10.000p", the bytes before p must not be reused.
-	  buffn = 0;
-	  memset(rxBuffer, 0, sizeof(rxBuffer));
-	  memset(rxBuffer_command, 0, sizeof(rxBuffer_command));
-	  discarding_oversized_frame = false;
-  }else
-  {
-
-	  if (discarding_oversized_frame)
-	  {
-		  // The frame is already invalid. Ignore it until its terminating semicolon.
-		  if (buff == ';')
-		  {
-			  discarding_oversized_frame = false;
-			  if (command_read == 0)
-			  {
-				  command_read = -1;
-			  }
-			  else if (rejected_frame_count < UINT32_MAX)
-			  {
-				  rejected_frame_count++;
-			  }
-		  }
-	  }
-	  else if (buff == ';')
-	  {
-		  // Keep the existing command until the main loop has copied it.
-		  if (command_read == 0)
-		  {
-			  memcpy(rxBuffer_command, rxBuffer, buffn);
-			  rxBuffer_command[buffn] = '\0';
-			  command_read = 1;
-		  }
-		  else if (rejected_frame_count < UINT32_MAX)
-		  {
-			  rejected_frame_count++;
-		  }
-		  buffn = 0;
-		  memset(rxBuffer, 0, sizeof(rxBuffer));
-	  }
-	  else if (buffn >= (int)sizeof(rxBuffer))
-	  {
-		  // Check before writing so an oversized frame cannot overflow rxBuffer.
-		  buffn = 0;
-		  memset(rxBuffer, 0, sizeof(rxBuffer));
-		  discarding_oversized_frame = true;
-	  }
-	  else
-	  {
-		  rxBuffer[buffn] = buff;
-		  buffn++;
-	  }
-
-  }
-  buff = 0;
-  HAL_UART_Receive_IT(&huart1, &buff, 1);
-
-
-}
-
-
-bool is_ascii_digit(char character) {
-    return character >= '0' && character <= '9';
-}
-
-// Parse one canonical wire number and return the number of characters it consumed.
-// A negative return value means the number was malformed.
-int parse_wire_number(const char *text, float *parsed_value) {
-    int index = 0;
-    if (text[index] == '-') {
-        index++;
-    }
-
-    int integer_start = index;
-    while (is_ascii_digit(text[index])) {
-        index++;
-    }
-    if (index == integer_start) {
-        return -1;
-    }
-
-    if (text[index] != '.' ||
-        !is_ascii_digit(text[index + 1]) ||
-        !is_ascii_digit(text[index + 2]) ||
-        !is_ascii_digit(text[index + 3]) ||
-        is_ascii_digit(text[index + 4])) {
-        return -1;
-    }
-    index += 4;
-
-    float value = 0.0f;
-    int converted_length = 0;
-    // %n records how many characters sscanf consumed while parsing the float.
-    int converted_value_count = sscanf(text, "%f%n", &value, &converted_length);
-    if (converted_value_count != 1) {
-        return -1;
-    }
-    if (converted_length != index) {
-        return -1;
-    }
-    if (!isfinite(value)) {
-        return -1;
-    }
-    if (text[0] == '-' && value == 0.0f) {
-        return -1;
-    }
-
-    *parsed_value = value;
-    return index;
-}
-
-int parse_counter_number(const char *text, uint32_t *parsed_value)
+/** Motor axis identifiers used by driveAxis(). */
+typedef enum
 {
-    int index = 0;
-    uint32_t value = 0;
+    AXIS_PAN = 1,
+    AXIS_TILT = 2
+} MotorAxis;
 
-    if (!is_ascii_digit(text[index])) {
-        return -1;
-    }
-    if (text[index] == '0' && is_ascii_digit(text[index + 1])) {
-        return -1;
-    }
-
-    while (is_ascii_digit(text[index])) {
-        uint32_t digit =
-            (uint32_t)(text[index] - '0');
-
-        if (value > (UINT32_MAX - digit) / 10U) {
-            return -1;
-        }
-
-        value = (value * 10U) + digit;
-        index++;
-    }
-
-    *parsed_value = value;
-
-    return index;
-}
-
-// Parse both coordinates from one complete command string.
-// expected_prefix distinguishes commands such as "CMD:MOV:" and "CMD:SET:".
-// Example input: "CMD:MOV:15.000,-40.000" (the receive callback removed the semicolon).
-bool parse_command_coordinates(const char *input, const char *expected_prefix, float *pan, float *tilt) {
-    size_t prefix_length = strlen(expected_prefix);
-    // The prefix must appear at the very beginning of the command.
-    if (strncmp(input, expected_prefix, prefix_length) != 0) {
-        return false;
-    }
-
-    // Skip the prefix, parse pan, and require a comma immediately afterward.
-    const char *coordinate_text = input + prefix_length;
-    float parsed_pan = 0.0f;
-    int pan_length = parse_wire_number(coordinate_text, &parsed_pan);
-    if (pan_length < 0 || coordinate_text[pan_length] != ',') {
-        return false;
-    }
-
-    // Tilt begins after the comma and must consume the rest of the command.
-    const char *tilt_text = coordinate_text + pan_length + 1;
-    float parsed_tilt = 0.0f;
-    int tilt_length = parse_wire_number(tilt_text, &parsed_tilt);
-    if (tilt_length < 0 || tilt_text[tilt_length] != '\0') {
-        return false;
-    }
-
-    // Do not expose partially parsed coordinates when any part of the command is invalid.
-    *pan = parsed_pan;
-    *tilt = parsed_tilt;
-    return true;
-}
-
-bool parse_mov_command(const char *input, float *pan, float *tilt) {
-    return parse_command_coordinates(input, "CMD:MOV:", pan, tilt);
-}
-
-bool parse_set_command(const char *input, float *pan, float *tilt) {
-    return parse_command_coordinates(input, "CMD:SET:", pan, tilt);
-}
-
-bool parse_counter_command(
-    const char *input,
-    const char *expected_prefix,
-    uint32_t *pan_counter,
-    uint32_t *tilt_counter
-)
+/** Direction relative to increasing or decreasing encoder counts. */
+typedef enum
 {
-    static const char expected_separator[] = ",TILT=";
+    DIRECTION_DECREASING,
+    DIRECTION_INCREASING
+} MotorDirection;
 
-    size_t prefix_length = strlen(expected_prefix);
-
-    if (strncmp(
-            input,
-            expected_prefix,
-            prefix_length
-        ) != 0) {
-        return false;
-    }
-
-    const char *counter_text =
-        input + prefix_length;
-
-    uint32_t parsed_pan = 0;
-
-    int pan_length = parse_counter_number(
-        counter_text,
-        &parsed_pan
-    );
-
-    if (pan_length < 0 ||
-        strncmp(
-            counter_text + pan_length,
-            expected_separator,
-            sizeof(expected_separator) - 1U
-        ) != 0) {
-        return false;
-    }
-
-    const char *tilt_text =
-        counter_text + pan_length + sizeof(expected_separator) - 1U;
-
-    uint32_t parsed_tilt = 0;
-
-    int tilt_length = parse_counter_number(
-        tilt_text,
-        &parsed_tilt
-    );
-
-    if (tilt_length < 0 ||
-        tilt_text[tilt_length] != '\0') {
-        return false;
-    }
-
-    *pan_counter = parsed_pan;
-    *tilt_counter = parsed_tilt;
-
-    return true;
-}
-
+/** Command variants recognized after UART framing removes the semicolon. */
 typedef enum
 {
     COMMAND_UNKNOWN,
@@ -408,62 +88,97 @@ typedef enum
     COMMAND_SET_CNT,
     COMMAND_VERSION,
     COMMAND_CNT
-} command_type_t;
+} CommandType;
 
-bool command_token_matches(const char *input, const char *token)
-{
-    static const char command_prefix[] = "CMD:";
-    size_t token_length = strlen(token);
-    if (strncmp(input, command_prefix, sizeof(command_prefix) - 1U) != 0 ||
-        strncmp(input + sizeof(command_prefix) - 1U, token, token_length) != 0) {
-        return false;
-    }
-    char next_character = input[sizeof(command_prefix) - 1U + token_length];
-    return next_character == ':' || next_character == '\0';
-}
+/** Latest pan encoder sample. */
+static uint32_t panPositionCounter = 0;
 
-command_type_t identify_command_type(const char *input)
-{
-    if (command_token_matches(input, "MOV_CNT")) {
-        return COMMAND_MOV_CNT;
-    }
-    if (command_token_matches(input, "SET_CNT")) {
-        return COMMAND_SET_CNT;
-    }
-    if (command_token_matches(input, "VERSION")) {
-        return COMMAND_VERSION;
-    }
-    if (command_token_matches(input, "SET")) {
-        return COMMAND_SET;
-    }
-    if (command_token_matches(input, "MOV")) {
-        return COMMAND_MOV;
-    }
-    if (command_token_matches(input, "CNT")) {
-        return COMMAND_CNT;
-    }
-    return COMMAND_UNKNOWN;
-}
+/** Latest tilt encoder sample. */
+static uint32_t tiltPositionCounter = 0;
 
-const char *command_type_name(command_type_t command_type)
-{
-    switch (command_type) {
-    case COMMAND_SET:
-        return "SET";
-    case COMMAND_MOV:
-        return "MOV";
-    case COMMAND_MOV_CNT:
-        return "MOV_CNT";
-    case COMMAND_SET_CNT:
-        return "SET_CNT";
-    case COMMAND_VERSION:
-        return "VERSION";
-    case COMMAND_CNT:
-        return "CNT";
-    default:
-        return "UNKNOWN";
-    }
-}
+/** Latest pan position converted from the encoder sample. */
+static float panPositionDegrees = 0.0f;
+
+/** Latest tilt position converted from the encoder sample. */
+static float tiltPositionDegrees = 0.0f;
+
+/** PWM compare value currently requested for the pan motor. */
+static int panPwmPowerLevel = INITIAL_PWM_POWER_LEVEL;
+
+/** PWM compare value currently requested for the tilt motor. */
+static int tiltPwmPowerLevel = INITIAL_PWM_POWER_LEVEL;
+
+/** Most recently accepted pan movement command, retained for legacy reporting. */
+static float commandedPanDegrees = 0.0f;
+
+/** Most recently accepted tilt movement command, retained for legacy reporting. */
+static float commandedTiltDegrees = 0.0f;
+
+/** Active pan target used by the motor controller. */
+static float targetPanDegrees = 0.0f;
+
+/** Active tilt target used by the motor controller. */
+static float targetTiltDegrees = 0.0f;
+
+/** True while an accepted movement command is active. */
+static bool movementActive = false;
+
+/** True when pan is within TARGET_TOLERANCE_DEG of its target. */
+static bool panTargetReached = false;
+
+/** True when tilt is within TARGET_TOLERANCE_DEG of its target. */
+static bool tiltTargetReached = false;
+
+/** Current automatic or legacy manual control mode. */
+static ControlMode controlMode = CONTROL_MODE_AUTOMATIC;
+
+/** Bytes accumulated for the frame currently arriving over UART. */
+static char receiveFrameBuffer[RECEIVE_FRAME_CAPACITY];
+
+/** Completed command plus one byte for its C string terminator. */
+static char pendingCommandBuffer[sizeof(receiveFrameBuffer) + 1U];
+
+/** Number of payload bytes currently stored in receiveFrameBuffer. */
+static int receiveFrameLength = 0;
+
+/**
+ * Command state shared with the UART ISR: 0 for none, 1 for ready, and -1 for
+ * an oversized frame. Volatile is required because the ISR changes it.
+ */
+static volatile int pendingCommandState = 0;
+
+/** Latest byte received by the interrupt-driven UART reader. */
+static uint8_t receivedByte = 0;
+
+/** True while ignoring an oversized frame until its terminating semicolon. */
+static bool discardingOversizedFrame = false;
+
+/** Number of complete frames rejected because another command was pending. */
+static volatile uint32_t rejectedFrameCount = 0;
+
+/** Number of interrupted or oversized frames awaiting a parse-failure NAK. */
+static volatile uint32_t unableToParseFrameCount = 0;
+
+/** Generation counter used to invalidate commands copied before a stop byte. */
+static volatile uint32_t stopGeneration = 0;
+
+/** Number of emergency-stop acknowledgements awaiting transmission. */
+static volatile uint32_t emergencyStopAcknowledgementCount = 0;
+
+/** Previous pan encoder sample used for discontinuity detection. */
+static uint32_t previousPanCounter = 0;
+
+/** Previous tilt encoder sample used for discontinuity detection. */
+static uint32_t previousTiltCounter = 0;
+
+/** True after the discontinuity detector has captured its first baseline. */
+static bool positionDiscontinuityBaselineValid = false;
+
+/** Exact VERSION response assembled from the canonical firmware version. */
+static const char firmwareVersionMessage[] = "MSG:VERSION:" FIRMWARE_VERSION ";\r\n";
+
+/** Exact fail-safe report sent after an implausible encoder jump. */
+static const char positionDiscontinuityMessage[] = "MSG:ERR:POSITION_DISCONTINUITY;\r\n";
 
 /* USER CODE END PV */
 
@@ -476,515 +191,896 @@ static void MX_TIM3_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
+static void delayMilliseconds(uint32_t milliseconds);
+static void enablePanMotor(void);
+static void disablePanMotor(void);
+static void enableTiltMotor(void);
+static void disableTiltMotor(void);
+static void sendData(const char *data, int size);
+static void sendAcknowledgement(const char *command, bool accepted, const char *reason);
+static bool counterChangeExceeds(uint32_t current, uint32_t previous, uint32_t maximumChange);
+static float panCounterToDegrees(uint32_t counter);
+static uint32_t panDegreesToCounter(float degrees);
+static float tiltCounterToDegrees(uint32_t counter);
+static uint32_t tiltDegreesToCounter(float degrees);
+static bool isAsciiDigit(char character);
+static int parseWireNumber(const char *text, float *parsedValue);
+static int parseCounterNumber(const char *text, uint32_t *parsedValue);
+static bool parseCommandCoordinates(const char *input, const char *expectedPrefix, float *pan, float *tilt);
+static bool parseMoveCommand(const char *input, float *pan, float *tilt);
+static bool parseSetCommand(const char *input, float *pan, float *tilt);
+static bool parseCounterCommand(
+        const char *input,
+        const char *expectedPrefix,
+        uint32_t *panCounter,
+        uint32_t *tiltCounter);
+static bool commandTokenMatches(const char *input, const char *token);
+static CommandType identifyCommandType(const char *input);
+static const char *commandTypeName(CommandType commandType);
+static void runMainLoopIteration(void);
+static void driveAxis(MotorAxis axis, int pwmPowerLevel, MotorDirection direction);
+static void updateMotorControl(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-
-
-//CDC_Receive_FS((uint8_t *)buffer,size);
-
-void MYPROG_Delay(int milliseconds)
+/**
+ * @brief Consume one received UART byte and restart interrupt reception.
+ *
+ * The emergency-stop byte is handled before normal framing so stopping never
+ * waits for the main loop. Complete commands remain stable until copied.
+ */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-	HAL_Delay(milliseconds);
+    (void)huart;
+
+    /* Preserve the dormant legacy keyboard-control behavior. */
+    if (receivedByte == 'a' || receivedByte == 'd' ||
+            receivedByte == 'w' || receivedByte == 's')
+    {
+        receivedByte = 0;
+        pendingCommandState = 0;
+        controlMode = CONTROL_MODE_MANUAL;
+    }
+    else if (receivedByte == 'p')
+    {
+        if (pendingCommandState == 1 && rejectedFrameCount < UINT32_MAX)
+        {
+            rejectedFrameCount++;
+        }
+        if ((pendingCommandState == -1 || receiveFrameLength > 0 || discardingOversizedFrame) &&
+                unableToParseFrameCount < UINT32_MAX)
+        {
+            unableToParseFrameCount++;
+        }
+
+        pendingCommandState = 0;
+        stopGeneration++;
+        if (emergencyStopAcknowledgementCount < UINT32_MAX)
+        {
+            emergencyStopAcknowledgementCount++;
+        }
+
+        movementActive = false;
+        controlMode = CONTROL_MODE_AUTOMATIC;
+        receivedByte = 0;
+        disablePanMotor();
+        disableTiltMotor();
+
+        /* Bytes before a stop must never become part of the next command. */
+        receiveFrameLength = 0;
+        memset(receiveFrameBuffer, 0, sizeof(receiveFrameBuffer));
+        memset(pendingCommandBuffer, 0, sizeof(pendingCommandBuffer));
+        discardingOversizedFrame = false;
+    }
+    else if (discardingOversizedFrame)
+    {
+        /* An invalid frame remains discarded through its terminating semicolon. */
+        if (receivedByte == ';')
+        {
+            discardingOversizedFrame = false;
+            if (pendingCommandState == 0)
+            {
+                pendingCommandState = -1;
+            }
+            else if (rejectedFrameCount < UINT32_MAX)
+            {
+                rejectedFrameCount++;
+            }
+        }
+    }
+    else if (receivedByte == ';')
+    {
+        /* Do not overwrite a complete command before the main loop copies it. */
+        if (pendingCommandState == 0)
+        {
+            memcpy(pendingCommandBuffer, receiveFrameBuffer, (size_t)receiveFrameLength);
+            pendingCommandBuffer[receiveFrameLength] = '\0';
+            pendingCommandState = 1;
+        }
+        else if (rejectedFrameCount < UINT32_MAX)
+        {
+            rejectedFrameCount++;
+        }
+
+        receiveFrameLength = 0;
+        memset(receiveFrameBuffer, 0, sizeof(receiveFrameBuffer));
+    }
+    else if (receiveFrameLength >= (int)sizeof(receiveFrameBuffer))
+    {
+        /* Check before writing so an oversized frame cannot overflow the buffer. */
+        receiveFrameLength = 0;
+        memset(receiveFrameBuffer, 0, sizeof(receiveFrameBuffer));
+        discardingOversizedFrame = true;
+    }
+    else
+    {
+        receiveFrameBuffer[receiveFrameLength] = (char)receivedByte;
+        receiveFrameLength++;
+    }
+
+    receivedByte = 0;
+    HAL_UART_Receive_IT(&huart1, &receivedByte, 1);
 }
 
-void MYPROG_enable_pan()
+/** @brief Return true only for an ASCII decimal digit. */
+static bool isAsciiDigit(char character)
 {
-	HAL_GPIO_WritePin(GPIOE, ENABLE_A_Pin, GPIO_PIN_SET);
+    return character >= '0' && character <= '9';
 }
 
-void MYPROG_disable_pan()
+/**
+ * @brief Parse one canonical signed wire number with exactly three decimals.
+ * @return The number of consumed characters, or -1 when malformed.
+ */
+static int parseWireNumber(const char *text, float *parsedValue)
 {
-	HAL_GPIO_WritePin(GPIOE, ENABLE_A_Pin, GPIO_PIN_RESET);
-	TIM3->CCR1 = 0;
-	TIM3->CCR2 = 0;
-	move_pan = 0;
+    int index = 0;
+    if (text[index] == '-')
+    {
+        index++;
+    }
+
+    int integerStart = index;
+    while (isAsciiDigit(text[index]))
+    {
+        index++;
+    }
+    if (index == integerStart)
+    {
+        return -1;
+    }
+
+    if (text[index] != '.' ||
+            !isAsciiDigit(text[index + 1]) ||
+            !isAsciiDigit(text[index + 2]) ||
+            !isAsciiDigit(text[index + 3]) ||
+            isAsciiDigit(text[index + 4]))
+    {
+        return -1;
+    }
+    index += 4;
+
+    float value = 0.0f;
+    int convertedLength = 0;
+    /* %n records how many characters sscanf consumed while parsing the float. */
+    int convertedValueCount = sscanf(text, "%f%n", &value, &convertedLength);
+    if (convertedValueCount != 1 || convertedLength != index || !isfinite(value))
+    {
+        return -1;
+    }
+    if (text[0] == '-' && value == 0.0f)
+    {
+        return -1;
+    }
+
+   *parsedValue = value;
+    return index;
 }
 
-void MYPROG_enable_tilt()
+/**
+ * @brief Parse one canonical unsigned decimal encoder count.
+ * @return The number of consumed characters, or -1 when malformed or too large.
+ */
+static int parseCounterNumber(const char *text, uint32_t *parsedValue)
 {
-	HAL_GPIO_WritePin(GPIOE, ENABLE_E_Pin, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(GPIOB, ENABLE_EE_Pin, GPIO_PIN_SET);
+    int index = 0;
+    uint32_t value = 0;
+
+    if (!isAsciiDigit(text[index]) ||
+            (text[index] == '0' && isAsciiDigit(text[index + 1])))
+    {
+        return -1;
+    }
+
+    while (isAsciiDigit(text[index]))
+    {
+        uint32_t digit = (uint32_t)(text[index] - '0');
+        if (value > (UINT32_MAX - digit) / 10U)
+        {
+            return -1;
+        }
+
+        value = (value * 10U) + digit;
+        index++;
+    }
+
+   *parsedValue = value;
+    return index;
 }
 
-void MYPROG_disable_tilt()
+/** @brief Parse the two coordinates from a complete MOV or SET command. */
+static bool parseCommandCoordinates(
+        const char *input,
+        const char *expectedPrefix,
+        float *pan,
+        float *tilt)
 {
-	HAL_GPIO_WritePin(GPIOE, ENABLE_E_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(GPIOB, ENABLE_EE_Pin, GPIO_PIN_RESET);
-	TIM3->CCR4 = 0;
-	TIM3->CCR3 = 0;
-	move_tilt = 0;
+    size_t prefixLength = strlen(expectedPrefix);
+    if (strncmp(input, expectedPrefix, prefixLength) != 0)
+    {
+        return false;
+    }
+
+    const char *coordinateText = input + prefixLength;
+    float parsedPan = 0.0f;
+    int panLength = parseWireNumber(coordinateText, &parsedPan);
+    if (panLength < 0 || coordinateText[panLength] != ',')
+    {
+        return false;
+    }
+
+    const char *tiltText = coordinateText + panLength + 1;
+    float parsedTilt = 0.0f;
+    int tiltLength = parseWireNumber(tiltText, &parsedTilt);
+    if (tiltLength < 0 || tiltText[tiltLength] != '\0')
+    {
+        return false;
+    }
+
+    /* Do not expose partially parsed coordinates after any parse failure. */
+   *pan = parsedPan;
+   *tilt = parsedTilt;
+    return true;
 }
 
-void MYPROG_SendData(const char * data, int size)
+/** @brief Parse an exact CMD:MOV coordinate payload. */
+static bool parseMoveCommand(const char *input, float *pan, float *tilt)
 {
-	 HAL_UART_Transmit(&huart1, (uint8_t *) data, size, 1000);
+    return parseCommandCoordinates(input, "CMD:MOV:", pan, tilt);
 }
 
-void MYPROG_GetData(char *buffer, int size)
+/** @brief Parse an exact CMD:SET coordinate payload. */
+static bool parseSetCommand(const char *input, float *pan, float *tilt)
 {
-
+    return parseCommandCoordinates(input, "CMD:SET:", pan, tilt);
 }
 
-void MYPROG_SendAcknowledgement(const char *command, bool accepted, const char *reason)
+/** @brief Parse the exact PAN and TILT fields of a counter command. */
+static bool parseCounterCommand(
+        const char *input,
+        const char *expectedPrefix,
+        uint32_t *panCounter,
+        uint32_t *tiltCounter)
 {
-	char acknowledgement[64];
-	int acknowledgement_length;
-	if (accepted)
-	{
-		acknowledgement_length = snprintf(acknowledgement, sizeof(acknowledgement),
-			"MSG:ACK:%s;\r\n", command);
-	}
-	else
-	{
-		acknowledgement_length = snprintf(acknowledgement, sizeof(acknowledgement),
-			"MSG:NAK:%s,%s;\r\n", command, reason);
-	}
-	if (acknowledgement_length > 0 && acknowledgement_length < (int)sizeof(acknowledgement))
-	{
-		MYPROG_SendData(acknowledgement, acknowledgement_length);
-	}
+    static const char expectedSeparator[] = ",TILT=";
+    size_t prefixLength = strlen(expectedPrefix);
+
+    if (strncmp(input, expectedPrefix, prefixLength) != 0)
+    {
+        return false;
+    }
+
+    const char *counterText = input + prefixLength;
+    uint32_t parsedPan = 0;
+    int panLength = parseCounterNumber(counterText, &parsedPan);
+    if (panLength < 0 ||
+            strncmp(counterText + panLength, expectedSeparator,
+                            sizeof(expectedSeparator) - 1U) != 0)
+    {
+        return false;
+    }
+
+    const char *tiltText = counterText + panLength + sizeof(expectedSeparator) - 1U;
+    uint32_t parsedTilt = 0;
+    int tiltLength = parseCounterNumber(tiltText, &parsedTilt);
+    if (tiltLength < 0 || tiltText[tiltLength] != '\0')
+    {
+        return false;
+    }
+
+   *panCounter = parsedPan;
+   *tiltCounter = parsedTilt;
+    return true;
 }
 
-bool counter_change_exceeds(uint32_t current, uint32_t previous, uint32_t maximum_change)
+/** @brief Return true when a command starts with one exact command token. */
+static bool commandTokenMatches(const char *input, const char *token)
 {
-	uint32_t change = current >= previous ? current - previous : previous - current;
-	return change > maximum_change;
+    static const char commandPrefix[] = "CMD:";
+    size_t tokenLength = strlen(token);
+    if (strncmp(input, commandPrefix, sizeof(commandPrefix) - 1U) != 0 ||
+            strncmp(input + sizeof(commandPrefix) - 1U, token, tokenLength) != 0)
+    {
+        return false;
+    }
+
+    char nextCharacter = input[sizeof(commandPrefix) - 1U + tokenLength];
+    return nextCharacter == ':' || nextCharacter == '\0';
 }
 
-float panCounterToDegrees(uint32_t counter)
+/** @brief Identify the command token without accepting ambiguous prefixes. */
+static CommandType identifyCommandType(const char *input)
 {
-	return ((float)counter - (float)panZeroDegreeCounter) / panCountsPerDegree;
+    if (commandTokenMatches(input, "MOV_CNT"))
+    {
+        return COMMAND_MOV_CNT;
+    }
+    if (commandTokenMatches(input, "SET_CNT"))
+    {
+        return COMMAND_SET_CNT;
+    }
+    if (commandTokenMatches(input, "VERSION"))
+    {
+        return COMMAND_VERSION;
+    }
+    if (commandTokenMatches(input, "SET"))
+    {
+        return COMMAND_SET;
+    }
+    if (commandTokenMatches(input, "MOV"))
+    {
+        return COMMAND_MOV;
+    }
+    if (commandTokenMatches(input, "CNT"))
+    {
+        return COMMAND_CNT;
+    }
+    return COMMAND_UNKNOWN;
 }
 
-uint32_t panDegreesToCounter(float degrees)
+/** @brief Return the protocol token used in an acknowledgement. */
+static const char *commandTypeName(CommandType commandType)
 {
-	return (uint32_t)((float)panZeroDegreeCounter + (degrees * panCountsPerDegree));
+    switch (commandType)
+    {
+        case COMMAND_SET:
+            return "SET";
+        case COMMAND_MOV:
+            return "MOV";
+        case COMMAND_MOV_CNT:
+            return "MOV_CNT";
+        case COMMAND_SET_CNT:
+            return "SET_CNT";
+        case COMMAND_VERSION:
+            return "VERSION";
+        case COMMAND_CNT:
+            return "CNT";
+        default:
+            return "UNKNOWN";
+    }
 }
 
-float tiltCounterToDegrees(uint32_t counter)
+
+
+/** @brief Delay execution for the requested number of milliseconds. */
+static void delayMilliseconds(uint32_t milliseconds)
 {
-	return ((float)counter - (float)tiltZeroDegreeCounter) / tiltCountsPerDegree;
+    HAL_Delay(milliseconds);
 }
 
-uint32_t tiltDegreesToCounter(float degrees)
+/** @brief Energize the pan motor driver. */
+static void enablePanMotor(void)
 {
-	return (uint32_t)((float)tiltZeroDegreeCounter + (degrees * tiltCountsPerDegree));
+    HAL_GPIO_WritePin(GPIOE, ENABLE_A_Pin, GPIO_PIN_SET);
 }
 
-void MYPROG_main_loop()
+/** @brief De-energize pan and clear both pan PWM channels. */
+static void disablePanMotor(void)
 {
-	float settimer1 =0;
-	float settimer2 =0;
-	char sendbuffer[64];
-	// Private command copy used by the main loop after releasing the shared UART buffer.
-	char command_to_process[sizeof(rxBuffer_command)];
-	// True only when command_to_process contains a command to parse during this loop.
-	bool command_available = false;
-	bool oversized_command_available = false;
-	bool rejected_frame_available = false;
-	bool unable_to_parse_frame_available = false;
-	bool emergency_stop_ack_available = false;
-	bool position_discontinuity_detected = false;
-	// Snapshot used to detect an emergency stop received after the command was copied.
-	// Example: if this is 4 and stop_generation becomes 5, the copied command is cancelled.
-	uint32_t copied_stop_generation = 0;
-
-
-
-	Pan_pos = TIM2->CNT;
-	Tilt_pos = TIM1->CNT;
-
-	if (position_discontinuity_baseline_valid && move &&
-		(counter_change_exceeds((uint32_t)Pan_pos, previous_pan_counter, MAX_POSITION_CHANGE_COUNTS) ||
-		 counter_change_exceeds((uint32_t)Tilt_pos, previous_tilt_counter, MAX_POSITION_CHANGE_COUNTS)))
-	{
-		move = 0;
-		mode = 0;
-		MYPROG_disable_pan();
-		MYPROG_disable_tilt();
-		position_discontinuity_detected = true;
-	}
-	previous_pan_counter = (uint32_t)Pan_pos;
-	previous_tilt_counter = (uint32_t)Tilt_pos;
-	position_discontinuity_baseline_valid = true;
-
-	Pan_pos_deg = panCounterToDegrees((uint32_t)Pan_pos);
-	Tilt_pos_deg = tiltCounterToDegrees((uint32_t)Tilt_pos);
-
-	MYPROG_Delay(5);
-	//MYPROG_SendData("ACK\n",3);
-
-	// Briefly pause UART interrupts while copying the shared command buffer.
-	// Example: the ISR can now receive the next frame while this private copy is parsed.
-	__disable_irq();
-	if (command_read == 1)
-	{
-		memcpy(command_to_process, rxBuffer_command, sizeof(command_to_process));
-		command_read = 0;
-		copied_stop_generation = stop_generation;
-		command_available = true;
-	}
-	else if (command_read == -1)
-	{
-		command_read = 0;
-		oversized_command_available = true;
-	}
-	if (rejected_frame_count > 0)
-	{
-		rejected_frame_count--;
-		rejected_frame_available = true;
-	}
-	if (unable_to_parse_frame_count > 0)
-	{
-		unable_to_parse_frame_count--;
-		unable_to_parse_frame_available = true;
-	}
-	if (emergency_stop_ack_count > 0)
-	{
-		emergency_stop_ack_count--;
-		emergency_stop_ack_available = true;
-	}
-	__enable_irq();
-
-	if (oversized_command_available)
-	{
-		MYPROG_SendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");
-	}
-	if (emergency_stop_ack_available)
-	{
-		MYPROG_SendAcknowledgement("EMERGENCY_STOP", true, NULL);
-	}
-	if (rejected_frame_available)
-	{
-		MYPROG_SendAcknowledgement("UNKNOWN", false, "REJECTED");
-	}
-	if (unable_to_parse_frame_available)
-	{
-		MYPROG_SendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");
-	}
-
-	if(command_available)
-	{
-		//MYPROG_SendData("read command",10);
-		// Keep parsed movement coordinates local until the complete command can be applied safely.
-		float requested_pan = 0.0f;
-		float requested_tilt = 0.0f;
-    uint32_t pan_counter = 0;
-    uint32_t tilt_counter = 0;
-		command_type_t command_type = identify_command_type(command_to_process);
-		bool command_parsed = false;
-		bool command_rejected = false;
-		switch (command_type)
-		{
-		case COMMAND_MOV:
-			command_parsed = parse_mov_command(command_to_process, &requested_pan, &requested_tilt);
-			command_rejected = command_parsed &&
-				(requested_pan < MIN_PAN_DEG || requested_pan > MAX_PAN_DEG ||
-				 requested_tilt < MIN_TILT_DEG || requested_tilt > MAX_TILT_DEG);
-			break;
-		case COMMAND_SET:
-			command_parsed = parse_set_command(command_to_process, &settimer1, &settimer2);
-			command_rejected = command_parsed &&
-				(settimer1 < MIN_PAN_DEG || settimer1 > MAX_PAN_DEG ||
-				 settimer2 < MIN_TILT_DEG || settimer2 > MAX_TILT_DEG);
-			break;
-		case COMMAND_VERSION:
-			command_parsed = strcmp(command_to_process, "CMD:VERSION") == 0;
-			break;
-		case COMMAND_CNT:
-			command_parsed = strcmp(command_to_process, "CMD:CNT") == 0;
-			break;
-		case COMMAND_MOV_CNT:
-			command_parsed = parse_counter_command(command_to_process, "CMD:MOV_CNT:PAN=",
-				&pan_counter, &tilt_counter);
-			break;
-		case COMMAND_SET_CNT:
-			command_parsed = parse_counter_command(command_to_process, "CMD:SET_CNT:PAN=",
-				&pan_counter, &tilt_counter);
-			break;
-		default:
-			break;
-		}
-		// Set when an emergency stop invalidates the command while it is being parsed.
-		bool command_cancelled = false;
-		bool send_counter_response = false;
-
-		// Parsing happens with interrupts enabled. Pause them again only while applying
-		// the result, and first make sure p was not received during parsing.
-		__disable_irq();
-		if (copied_stop_generation != stop_generation)
-		{
-			command_cancelled = true;
-		}
-		else if (!command_parsed || command_rejected)
-		{
-			move = 0;
-			mode = 0;
-			MYPROG_disable_pan();
-			MYPROG_disable_tilt();
-		}
-		else
-		{
-			switch (command_type)
-			{
-			case COMMAND_CNT:
-				pan_counter = TIM2->CNT;
-				tilt_counter = TIM1->CNT;
-				send_counter_response = true;
-				break;
-			case COMMAND_SET_CNT:
-				move = 0;
-				mode = 0;
-				MYPROG_disable_pan();
-				MYPROG_disable_tilt();
-				TIM2->CNT = pan_counter;
-				TIM1->CNT = tilt_counter;
-				pan_counter = TIM2->CNT;
-				tilt_counter = TIM1->CNT;
-				previous_pan_counter = pan_counter;
-				previous_tilt_counter = tilt_counter;
-				position_discontinuity_baseline_valid = true;
-				send_counter_response = true;
-				break;
-			case COMMAND_MOV_CNT:
-				requested_pan = panCounterToDegrees(pan_counter);
-				requested_tilt = tiltCounterToDegrees(tilt_counter);
-				/* fall through */
-			case COMMAND_MOV:
-				Pan_command = requested_pan;
-				Tilt_command = requested_tilt;
-				move_pan = 0;
-				move_tilt = 0;
-				move = 1;
-				mode = 0;
-				command_position_PAN = Pan_command;
-				command_position_TILT = Tilt_command;
-				Pan_speed = 255;
-				Tilt_speed = 255;
-				break;
-			case COMMAND_SET:
-			{
-				move = 0;
-				mode = 0;
-				TIM1->CNT = tiltDegreesToCounter(settimer2);
-				TIM2->CNT = panDegreesToCounter(settimer1);
-				previous_pan_counter = TIM2->CNT;
-				previous_tilt_counter = TIM1->CNT;
-				position_discontinuity_baseline_valid = true;
-				break;
-			}
-			default:
-				break;
-			}
-		}
-		__enable_irq();
-
-		bool command_accepted = !command_cancelled && command_parsed && !command_rejected;
-		if (command_accepted)
-		{
-			MYPROG_SendAcknowledgement(command_type_name(command_type), true, NULL);
-		}
-		else
-		{
-			const char *reason = command_rejected
-				? "OUT_OF_BOUNDS"
-				: (command_cancelled ? "REJECTED" : "UNABLE_TO_PARSE");
-			MYPROG_SendAcknowledgement(command_type_name(command_type), false, reason);
-		}
-
-		if (command_accepted && send_counter_response)
-		{
-			int counter_message_length = snprintf(sendbuffer, sizeof(sendbuffer),
-				"MSG:CNT:PAN=%lu,TILT=%lu;\r\n",
-				(unsigned long)pan_counter,(unsigned long)tilt_counter);
-			if (counter_message_length > 0 && counter_message_length < (int)sizeof(sendbuffer))
-			{
-				MYPROG_SendData(sendbuffer, counter_message_length);
-			}
-		}
-		else if (command_accepted && command_type == COMMAND_VERSION)
-		{
-			MYPROG_SendData(firmware_version_message, (int)sizeof(firmware_version_message) - 1);
-		}
-		else if (command_accepted && (command_type == COMMAND_MOV || command_type == COMMAND_MOV_CNT || command_type == COMMAND_SET))
-		{
-			// snprintf returns the message length without counting the final null byte.
-			int command_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "%.2f , %.2f \r\n", Pan_command, Tilt_command);
-			// A length as large as the buffer means snprintf had to truncate the message.
-			if (command_message_length > 0 && command_message_length < (int)sizeof(sendbuffer))
-			{
-				MYPROG_SendData(sendbuffer, command_message_length);
-			}
-		}
-	}
-
-	if (position_discontinuity_detected)
-	{
-		// A command received in the same loop must not restart motion after the fault.
-		move = 0;
-		mode = 0;
-		MYPROG_disable_pan();
-		MYPROG_disable_tilt();
-		MYPROG_SendData(position_discontinuity_message, (int)sizeof(position_discontinuity_message) - 1);
-	}
-
-	int target_reached = move_pan && move_tilt;
-
-	if(move && !target_reached && mode ==0)
-			{
-			MYPROG_motor_control_loop();
-			}else if ( mode == 1)
-			{
-				move = 0;
-			}else
-			{
-				//command_read =0;
-					  move = 0;
-					  //buff =0;
-					  MYPROG_disable_pan();
-					  MYPROG_disable_tilt();
-			}
-
-
-
-	// Example: send through the report's \n, but not the unused remainder of sendbuffer.
-	int position_message_length = snprintf(sendbuffer, sizeof(sendbuffer), "MSG:POS:PAN=%.3f,TILT=%.3f\r\n", Pan_pos_deg, Tilt_pos_deg);
-	if (position_message_length > 0 && position_message_length < (int)sizeof(sendbuffer))
-	{
-		MYPROG_SendData(sendbuffer, position_message_length);
-	}
-
-
-	//MYPROG_SendData(rxBuffer_command,64);
-
-
-
-
-	//MYPROG_move_axis(1, 128,1);
-	//MYPROG_move_axis(2, 128,1);
-
+    HAL_GPIO_WritePin(GPIOE, ENABLE_A_Pin, GPIO_PIN_RESET);
+    TIM3->CCR1 = 0;
+    TIM3->CCR2 = 0;
+    panTargetReached = false;
 }
 
-void MYPROG_move_axis(int axis, int speed, int dir)
+/** @brief Energize both tilt motor-driver enable lines. */
+static void enableTiltMotor(void)
 {
-	// ch1 is PAN clockwise   ch2 is PAN counter clockwise
-	// ch3 is TILT clockwise   ch4 is TILT counter clockwise
-	//speed is PWM from 0 to 255;
-
-	    if(axis ==1){
-		MYPROG_disable_pan();
-	    	if(dir ==1){
-	    	TIM3->CCR2 = 0;
-	    	TIM3->CCR1 = speed;
-		MYPROG_enable_pan();
-	    	}else{
-	    	TIM3->CCR1 = 0;
-	    	TIM3->CCR2 = speed;
-		MYPROG_enable_pan();
-	    	}
-
-	    }else if(axis ==2)
-	    {
-		MYPROG_disable_tilt();
-	    	if(dir ==1){
-
-	    	TIM3->CCR3 = speed;
-	    	TIM3->CCR4 = 0;
-		MYPROG_enable_tilt();
-	    	}else{
-	    	TIM3->CCR4 = speed;
-	    	TIM3->CCR3 = 0;
-		MYPROG_enable_tilt();
-	    	}
-
-
-	    }else{
-		MYPROG_disable_tilt();
-		MYPROG_disable_pan();
-	    	TIM3->CCR2 =0;
-	    	TIM3->CCR1 =0;
-	    	TIM3->CCR3 =0;
-	    	TIM3->CCR4 =0;
-	    }
+    HAL_GPIO_WritePin(GPIOE, ENABLE_E_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOB, ENABLE_EE_Pin, GPIO_PIN_SET);
 }
 
-void MYPROG_motor_control_loop()
+/** @brief De-energize tilt and clear both tilt PWM channels. */
+static void disableTiltMotor(void)
 {
+    HAL_GPIO_WritePin(GPIOE, ENABLE_E_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, ENABLE_EE_Pin, GPIO_PIN_RESET);
+    TIM3->CCR4 = 0;
+    TIM3->CCR3 = 0;
+    tiltTargetReached = false;
+}
 
-	float tilt_deviation = fabs(Tilt_pos_deg - command_position_TILT);
-	float pan_deviation = fabs(Pan_pos_deg - command_position_PAN);
+/** @brief Transmit an exact byte range over the controller UART. */
+static void sendData(const char *data, int size)
+{
+    HAL_UART_Transmit(
+            &huart1,
+            (uint8_t *)data,
+            (uint16_t)size,
+            UART_TRANSMIT_TIMEOUT_MS);
+}
 
+/** @brief Format and send an ACK or NAK for one command token. */
+static void sendAcknowledgement(const char *command, bool accepted, const char *reason)
+{
+    char acknowledgement[RECEIVE_FRAME_CAPACITY];
+    int acknowledgementLength;
 
+    if (accepted)
+    {
+        acknowledgementLength = snprintf(
+                acknowledgement,
+                sizeof(acknowledgement),
+                "MSG:ACK:%s;\r\n",
+                command);
+    }
+    else
+    {
+        acknowledgementLength = snprintf(
+                acknowledgement,
+                sizeof(acknowledgement),
+                "MSG:NAK:%s,%s;\r\n",
+                command,
+                reason);
+    }
 
-	if(Pan_pos_deg > (command_position_PAN-2) && Pan_pos_deg < (command_position_PAN+2))
-		{
-			//set low speed
-			Pan_speed =pan_deviation*78+99;
-		}else {
-			//set slew speed
-			Pan_speed = 255;
-		}
+    if (acknowledgementLength > 0 &&
+            acknowledgementLength < (int)sizeof(acknowledgement))
+    {
+        sendData(acknowledgement, acknowledgementLength);
+    }
+}
 
+/** @brief Return true when two encoder samples differ by an unsafe amount. */
+static bool counterChangeExceeds(
+        uint32_t current,
+        uint32_t previous,
+        uint32_t maximumChange)
+{
+    uint32_t change = current >= previous ? current - previous : previous - current;
+    return change > maximumChange;
+}
 
-	if(Tilt_pos_deg > (command_position_TILT-2) && Tilt_pos_deg < (command_position_TILT+2))
-			{
-				//set low speed
-				Tilt_speed = tilt_deviation*96+63;
-			}else {
-				//set slew speed
-				Tilt_speed = 255;
-			}
+/** @brief Convert a raw pan encoder count to firmware-relative degrees. */
+static float panCounterToDegrees(uint32_t counter)
+{
+    return ((float)counter - (float)PAN_ZERO_DEGREE_COUNTER) / PAN_COUNTS_PER_DEGREE;
+}
 
+/** @brief Convert firmware-relative pan degrees to a raw encoder count. */
+static uint32_t panDegreesToCounter(float degrees)
+{
+    return (uint32_t)((float)PAN_ZERO_DEGREE_COUNTER + (degrees * PAN_COUNTS_PER_DEGREE));
+}
 
+/** @brief Convert a raw tilt encoder count to firmware-relative degrees. */
+static float tiltCounterToDegrees(uint32_t counter)
+{
+    return ((float)counter - (float)TILT_ZERO_DEGREE_COUNTER) / TILT_COUNTS_PER_DEGREE;
+}
 
+/** @brief Convert firmware-relative tilt degrees to a raw encoder count. */
+static uint32_t tiltDegreesToCounter(float degrees)
+{
+    return (uint32_t)((float)TILT_ZERO_DEGREE_COUNTER + (degrees * TILT_COUNTS_PER_DEGREE));
+}
 
+/** @brief Execute one sample, command-processing, and reporting iteration. */
+static void runMainLoopIteration(void)
+{
+    float setPanDegrees = 0.0f;
+    float setTiltDegrees = 0.0f;
+    char sendBuffer[RECEIVE_FRAME_CAPACITY];
+    char commandToProcess[sizeof(pendingCommandBuffer)];
+    bool commandAvailable = false;
+    bool oversizedCommandAvailable = false;
+    bool rejectedFrameAvailable = false;
+    bool unableToParseFrameAvailable = false;
+    bool emergencyStopAcknowledgementAvailable = false;
+    bool positionDiscontinuityDetected = false;
+    uint32_t copiedStopGeneration = 0;
 
+    panPositionCounter = TIM2->CNT;
+    tiltPositionCounter = TIM1->CNT;
 
-	if(Pan_pos_deg < (command_position_PAN-0.1))
-	{
-		//move right
-		MYPROG_move_axis(1, Pan_speed, 1);
-		move_pan = 0;
-	}else if( Pan_pos_deg>(command_position_PAN+0.1))
-	{
-		// move left
-		MYPROG_move_axis(1, Pan_speed, 0);
-		move_pan = 0;
-	}else{
-		//stop
-		MYPROG_disable_pan();
-		move_pan = 1;
-	}
+    /* Any implausible encoder jump during motion immediately fails safe. */
+    if (positionDiscontinuityBaselineValid && movementActive &&
+            (counterChangeExceeds(
+                      panPositionCounter,
+                      previousPanCounter,
+                      MAX_POSITION_CHANGE_COUNTS) ||
+              counterChangeExceeds(
+                      tiltPositionCounter,
+                      previousTiltCounter,
+                      MAX_POSITION_CHANGE_COUNTS)))
+    {
+        movementActive = false;
+        controlMode = CONTROL_MODE_AUTOMATIC;
+        disablePanMotor();
+        disableTiltMotor();
+        positionDiscontinuityDetected = true;
+    }
+    previousPanCounter = panPositionCounter;
+    previousTiltCounter = tiltPositionCounter;
+    positionDiscontinuityBaselineValid = true;
 
+    panPositionDegrees = panCounterToDegrees(panPositionCounter);
+    tiltPositionDegrees = tiltCounterToDegrees(tiltPositionCounter);
+    delayMilliseconds(MAIN_LOOP_DELAY_MS);
 
+    /* Keep this critical section short so the ISR can resume framing quickly. */
+    __disable_irq();
+    if (pendingCommandState == 1)
+    {
+        memcpy(commandToProcess, pendingCommandBuffer, sizeof(commandToProcess));
+        pendingCommandState = 0;
+        copiedStopGeneration = stopGeneration;
+        commandAvailable = true;
+    }
+    else if (pendingCommandState == -1)
+    {
+        pendingCommandState = 0;
+        oversizedCommandAvailable = true;
+    }
+    if (rejectedFrameCount > 0)
+    {
+        rejectedFrameCount--;
+        rejectedFrameAvailable = true;
+    }
+    if (unableToParseFrameCount > 0)
+    {
+        unableToParseFrameCount--;
+        unableToParseFrameAvailable = true;
+    }
+    if (emergencyStopAcknowledgementCount > 0)
+    {
+        emergencyStopAcknowledgementCount--;
+        emergencyStopAcknowledgementAvailable = true;
+    }
+    __enable_irq();
 
+    if (oversizedCommandAvailable)
+    {
+        sendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");
+    }
+    if (emergencyStopAcknowledgementAvailable)
+    {
+        sendAcknowledgement("EMERGENCY_STOP", true, NULL);
+    }
+    if (rejectedFrameAvailable)
+    {
+        sendAcknowledgement("UNKNOWN", false, "REJECTED");
+    }
+    if (unableToParseFrameAvailable)
+    {
+        sendAcknowledgement("UNKNOWN", false, "UNABLE_TO_PARSE");
+    }
 
-	if(Tilt_pos_deg < (command_position_TILT-0.1))
-	{
-		//move right
-		MYPROG_move_axis(2, Tilt_speed, 1);
-		move_tilt =0;
-	}else if( Tilt_pos_deg>(command_position_TILT+0.1))
-	{
-		// move left
-		MYPROG_move_axis(2, Tilt_speed, 0);
-		move_tilt =0;
-	}else{
-		//stop
-		 MYPROG_disable_tilt();
-		 move_tilt =1;
-	}
+    if (commandAvailable)
+    {
+        /* Parsed values remain local until the complete command can be applied. */
+        float requestedPan = 0.0f;
+        float requestedTilt = 0.0f;
+        uint32_t panCounter = 0;
+        uint32_t tiltCounter = 0;
+        CommandType commandType = identifyCommandType(commandToProcess);
+        bool commandParsed = false;
+        bool commandRejected = false;
 
+        switch (commandType)
+        {
+            case COMMAND_MOV:
+                commandParsed = parseMoveCommand(commandToProcess, &requestedPan, &requestedTilt);
+                commandRejected = commandParsed &&
+                        (requestedPan < MIN_PAN_DEG || requestedPan > MAX_PAN_DEG ||
+                          requestedTilt < MIN_TILT_DEG || requestedTilt > MAX_TILT_DEG);
+                break;
+            case COMMAND_SET:
+                commandParsed = parseSetCommand(commandToProcess, &setPanDegrees, &setTiltDegrees);
+                commandRejected = commandParsed &&
+                        (setPanDegrees < MIN_PAN_DEG || setPanDegrees > MAX_PAN_DEG ||
+                          setTiltDegrees < MIN_TILT_DEG || setTiltDegrees > MAX_TILT_DEG);
+                break;
+            case COMMAND_VERSION:
+                commandParsed = strcmp(commandToProcess, "CMD:VERSION") == 0;
+                break;
+            case COMMAND_CNT:
+                commandParsed = strcmp(commandToProcess, "CMD:CNT") == 0;
+                break;
+            case COMMAND_MOV_CNT:
+                commandParsed = parseCounterCommand(
+                        commandToProcess,
+                        "CMD:MOV_CNT:PAN=",
+                        &panCounter,
+                        &tiltCounter);
+                break;
+            case COMMAND_SET_CNT:
+                commandParsed = parseCounterCommand(
+                        commandToProcess,
+                        "CMD:SET_CNT:PAN=",
+                        &panCounter,
+                        &tiltCounter);
+                break;
+            default:
+                break;
+        }
 
+        bool commandCancelled = false;
+        bool sendCounterResponse = false;
 
+        /* A stop received during parsing invalidates the copied command. */
+        __disable_irq();
+        if (copiedStopGeneration != stopGeneration)
+        {
+            commandCancelled = true;
+        }
+        else if (!commandParsed || commandRejected)
+        {
+            movementActive = false;
+            controlMode = CONTROL_MODE_AUTOMATIC;
+            disablePanMotor();
+            disableTiltMotor();
+        }
+        else
+        {
+            switch (commandType)
+            {
+                case COMMAND_CNT:
+                    panCounter = TIM2->CNT;
+                    tiltCounter = TIM1->CNT;
+                    sendCounterResponse = true;
+                    break;
+                case COMMAND_SET_CNT:
+                    movementActive = false;
+                    controlMode = CONTROL_MODE_AUTOMATIC;
+                    disablePanMotor();
+                    disableTiltMotor();
+                    TIM2->CNT = panCounter;
+                    TIM1->CNT = tiltCounter;
+                    panCounter = TIM2->CNT;
+                    tiltCounter = TIM1->CNT;
+                    previousPanCounter = panCounter;
+                    previousTiltCounter = tiltCounter;
+                    positionDiscontinuityBaselineValid = true;
+                    sendCounterResponse = true;
+                    break;
+                case COMMAND_MOV_CNT:
+                    requestedPan = panCounterToDegrees(panCounter);
+                    requestedTilt = tiltCounterToDegrees(tiltCounter);
+                    /* fall through */
+                case COMMAND_MOV:
+                    commandedPanDegrees = requestedPan;
+                    commandedTiltDegrees = requestedTilt;
+                    panTargetReached = false;
+                    tiltTargetReached = false;
+                    movementActive = true;
+                    controlMode = CONTROL_MODE_AUTOMATIC;
+                    targetPanDegrees = commandedPanDegrees;
+                    targetTiltDegrees = commandedTiltDegrees;
+                    panPwmPowerLevel = MAX_PWM_POWER_LEVEL;
+                    tiltPwmPowerLevel = MAX_PWM_POWER_LEVEL;
+                    break;
+                case COMMAND_SET:
+                    movementActive = false;
+                    controlMode = CONTROL_MODE_AUTOMATIC;
+                    TIM1->CNT = tiltDegreesToCounter(setTiltDegrees);
+                    TIM2->CNT = panDegreesToCounter(setPanDegrees);
+                    previousPanCounter = TIM2->CNT;
+                    previousTiltCounter = TIM1->CNT;
+                    positionDiscontinuityBaselineValid = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+        __enable_irq();
 
+        bool commandAccepted = !commandCancelled && commandParsed && !commandRejected;
+        if (commandAccepted)
+        {
+            sendAcknowledgement(commandTypeName(commandType), true, NULL);
+        }
+        else
+        {
+            const char *reason = commandRejected
+                    ? "OUT_OF_BOUNDS"
+                    : (commandCancelled ? "REJECTED" : "UNABLE_TO_PARSE");
+            sendAcknowledgement(commandTypeName(commandType), false, reason);
+        }
 
+        if (commandAccepted && sendCounterResponse)
+        {
+            int counterMessageLength = snprintf(
+                    sendBuffer,
+                    sizeof(sendBuffer),
+                    "MSG:CNT:PAN=%lu,TILT=%lu;\r\n",
+                    (unsigned long)panCounter,
+                    (unsigned long)tiltCounter);
+            if (counterMessageLength > 0 && counterMessageLength < (int)sizeof(sendBuffer))
+            {
+                sendData(sendBuffer, counterMessageLength);
+            }
+        }
+        else if (commandAccepted && commandType == COMMAND_VERSION)
+        {
+            sendData(firmwareVersionMessage, (int)sizeof(firmwareVersionMessage) - 1);
+        }
+        else if (commandAccepted &&
+                          (commandType == COMMAND_MOV ||
+                            commandType == COMMAND_MOV_CNT ||
+                            commandType == COMMAND_SET))
+        {
+            int commandMessageLength = snprintf(
+                    sendBuffer,
+                    sizeof(sendBuffer),
+                    "%.2f , %.2f \r\n",
+                    commandedPanDegrees,
+                    commandedTiltDegrees);
+            if (commandMessageLength > 0 && commandMessageLength < (int)sizeof(sendBuffer))
+            {
+                sendData(sendBuffer, commandMessageLength);
+            }
+        }
+    }
 
+    if (positionDiscontinuityDetected)
+    {
+        /* A command received in this loop must not restart motion after the fault. */
+        movementActive = false;
+        controlMode = CONTROL_MODE_AUTOMATIC;
+        disablePanMotor();
+        disableTiltMotor();
+        sendData(
+                positionDiscontinuityMessage,
+                (int)sizeof(positionDiscontinuityMessage) - 1);
+    }
 
+    bool targetReached = panTargetReached && tiltTargetReached;
+    if (movementActive && !targetReached && controlMode == CONTROL_MODE_AUTOMATIC)
+    {
+        updateMotorControl();
+    }
+    else if (controlMode == CONTROL_MODE_MANUAL)
+    {
+        movementActive = false;
+    }
+    else
+    {
+        movementActive = false;
+        disablePanMotor();
+        disableTiltMotor();
+    }
 
+    int positionMessageLength = snprintf(
+            sendBuffer,
+            sizeof(sendBuffer),
+            "MSG:POS:PAN=%.3f,TILT=%.3f\r\n",
+            panPositionDegrees,
+            tiltPositionDegrees);
+    if (positionMessageLength > 0 && positionMessageLength < (int)sizeof(sendBuffer))
+    {
+        sendData(sendBuffer, positionMessageLength);
+    }
+}
+
+/**
+ * @brief Drive one motor axis in the requested encoder-count direction.
+ *
+ * TIM3 channels 1/2 drive pan in opposite directions; channels 3/4 do the
+ * same for tilt. Disabling the axis before changing compare registers avoids
+ * briefly energizing both directions at once.
+ */
+static void driveAxis(MotorAxis axis, int pwmPowerLevel, MotorDirection direction)
+{
+    if (axis == AXIS_PAN)
+    {
+        disablePanMotor();
+        if (direction == DIRECTION_INCREASING)
+        {
+            TIM3->CCR2 = 0;
+            TIM3->CCR1 = pwmPowerLevel;
+        }
+        else
+        {
+            TIM3->CCR1 = 0;
+            TIM3->CCR2 = pwmPowerLevel;
+        }
+        enablePanMotor();
+    }
+    else if (axis == AXIS_TILT)
+    {
+        disableTiltMotor();
+        if (direction == DIRECTION_INCREASING)
+        {
+            TIM3->CCR3 = pwmPowerLevel;
+            TIM3->CCR4 = 0;
+        }
+        else
+        {
+            TIM3->CCR4 = pwmPowerLevel;
+            TIM3->CCR3 = 0;
+        }
+        enableTiltMotor();
+    }
+    else
+    {
+        /* An invalid axis request fails safe by disabling both motors. */
+        disableTiltMotor();
+        disablePanMotor();
+    }
+}
+
+/** @brief Update both motor outputs from the current position errors. */
+static void updateMotorControl(void)
+{
+    float panDeviation = fabsf(panPositionDegrees - targetPanDegrees);
+    float tiltDeviation = fabsf(tiltPositionDegrees - targetTiltDegrees);
+
+    /* Reduce PWM near each target while retaining full power for long slews. */
+    if (panPositionDegrees > targetPanDegrees - PAN_PWM_CONTROL_WINDOW_DEG &&
+            panPositionDegrees < targetPanDegrees + PAN_PWM_CONTROL_WINDOW_DEG)
+    {
+        panPwmPowerLevel = (int)(panDeviation * PAN_PWM_COEFFICIENT + PAN_PWM_INTERCEPT);
+    }
+    else
+    {
+        panPwmPowerLevel = MAX_PWM_POWER_LEVEL;
+    }
+
+    if (tiltPositionDegrees > targetTiltDegrees - TILT_PWM_CONTROL_WINDOW_DEG &&
+            tiltPositionDegrees < targetTiltDegrees + TILT_PWM_CONTROL_WINDOW_DEG)
+    {
+        tiltPwmPowerLevel = (int)(tiltDeviation * TILT_PWM_COEFFICIENT + TILT_PWM_INTERCEPT);
+    }
+    else
+    {
+        tiltPwmPowerLevel = MAX_PWM_POWER_LEVEL;
+    }
+
+    if (panPositionDegrees < targetPanDegrees - TARGET_TOLERANCE_DEG)
+    {
+        driveAxis(AXIS_PAN, panPwmPowerLevel, DIRECTION_INCREASING);
+        panTargetReached = false;
+    }
+    else if (panPositionDegrees > targetPanDegrees + TARGET_TOLERANCE_DEG)
+    {
+        driveAxis(AXIS_PAN, panPwmPowerLevel, DIRECTION_DECREASING);
+        panTargetReached = false;
+    }
+    else
+    {
+        disablePanMotor();
+        panTargetReached = true;
+    }
+
+    if (tiltPositionDegrees < targetTiltDegrees - TARGET_TOLERANCE_DEG)
+    {
+        driveAxis(AXIS_TILT, tiltPwmPowerLevel, DIRECTION_INCREASING);
+        tiltTargetReached = false;
+    }
+    else if (tiltPositionDegrees > targetTiltDegrees + TARGET_TOLERANCE_DEG)
+    {
+        driveAxis(AXIS_TILT, tiltPwmPowerLevel, DIRECTION_DECREASING);
+        tiltTargetReached = false;
+    }
+    else
+    {
+        disableTiltMotor();
+        tiltTargetReached = true;
+    }
 }
 
 
@@ -1025,19 +1121,19 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  	 TIM3->CCR1 = 0;
-  	 TIM3->CCR2 =0;
+    TIM3->CCR1 = 0;
+    TIM3->CCR2 = 0;
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3);
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
 
-    HAL_UART_Receive_IT(&huart1, &buff, 1);
+    HAL_UART_Receive_IT(&huart1, &receivedByte, 1);
     HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
     HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
 
-    MYPROG_disable_tilt();
-    MYPROG_disable_pan();
+    disableTiltMotor();
+    disablePanMotor();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -1048,7 +1144,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	  MYPROG_main_loop();
+    runMainLoopIteration();
 
   }
   /* USER CODE END 3 */
