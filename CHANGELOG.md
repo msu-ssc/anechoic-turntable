@@ -73,3 +73,7 @@ Several small TUI improvements
 Add controller handling of
 - Firmware NAK for invalid MOV and SET commands
 - Unsolicited messages when movement is stopped because of a jump in movement
+
+## 0.13.0 — 2026-08-07
+
+Standardize everything on pan/tilt terminology
