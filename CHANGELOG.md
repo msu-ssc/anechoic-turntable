@@ -67,3 +67,9 @@ Several small TUI improvements
 - Filter out position messages by default
 - Include text on "other" events
 - Make state display more prominent
+
+## 0.12.0 — 2026-08-07
+
+Add controller handling of
+- Firmware NAK for invalid MOV and SET commands
+- Unsolicited messages when movement is stopped because of a jump in movement
