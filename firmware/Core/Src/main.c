@@ -659,13 +659,13 @@ void MYPROG_main_loop()
 			command_parsed = parse_mov_command(command_to_process, &move_yaw, &move_pitch);
 			command_rejected = command_parsed &&
 				(move_yaw < MIN_PAN_DEG || move_yaw > MAX_PAN_DEG ||
-				 move_pitch < MIN_MOVE_TILT_DEG || move_pitch > MAX_MOVE_TILT_DEG);
+				 move_pitch < MIN_TILT_DEG || move_pitch > MAX_TILT_DEG);
 			break;
 		case COMMAND_SET:
 			command_parsed = parse_set_command(command_to_process, &settimer1, &settimer2);
 			command_rejected = command_parsed &&
 				(settimer1 < MIN_PAN_DEG || settimer1 > MAX_PAN_DEG ||
-				 settimer2 < MIN_SET_TILT_DEG || settimer2 > MAX_SET_TILT_DEG);
+				 settimer2 < MIN_TILT_DEG || settimer2 > MAX_TILT_DEG);
 			break;
 		case COMMAND_VERSION:
 			command_parsed = strcmp(command_to_process, "CMD:VERSION") == 0;
