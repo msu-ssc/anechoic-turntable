@@ -20,6 +20,7 @@ from anechoic_turntable.messages import ReceivedMessageCounter
 from anechoic_turntable.messages import ReceivedMessageError
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
+from anechoic_turntable.position_publisher import PositionPublisher
 from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.serial_listener import SerialConnection
 
@@ -204,6 +205,7 @@ class ControllerThread(threading.Thread):
         command_repetitions: int = 3,
         event_history_size: int = 1_000,
         poll_interval: float = 0.01,
+        position_publisher: PositionPublisher | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         super().__init__(name="turntable-controller", daemon=True)
@@ -224,6 +226,7 @@ class ControllerThread(threading.Thread):
         self._acknowledgement_timeout = acknowledgement_timeout
         self._command_repetitions = command_repetitions
         self._poll_interval = poll_interval
+        self._position_publisher = position_publisher
         self._logger = logger or logging.getLogger(__name__)
 
         self._command_queue: queue.Queue[_Command] = queue.Queue()
@@ -613,6 +616,13 @@ class ControllerThread(threading.Thread):
                     corrected_position=self._corrected_position,
                 )
             )
+            if self._position_publisher is not None:
+                self._position_publisher.publish(
+                    timestamp=event.timestamp,
+                    state=self._state.value,
+                    pan=self._corrected_position.pan,
+                    tilt=self._corrected_position.tilt,
+                )
 
     def _handle_acknowledgement(self, event: ReceivedMessageAcknowledgement) -> None:
         with self._lock:

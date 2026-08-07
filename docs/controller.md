@@ -4,6 +4,23 @@
 thread to frame incoming serial messages and a second thread to maintain
 controller state and send commands.
 
+By default, each valid position report also queues a compact JSON message for a
+ZMQ PUB socket bound to `tcp://localhost:8005`. Publishing runs on a separate
+daemon thread and uses a one-item, latest-value queue, so a slow subscriber or
+socket cannot block serial control. If telemetry falls behind, an older queued
+position is replaced by the newest one. Each message contains the
+position-report timestamp, the controller state after processing that report,
+and the physical pan and tilt:
+
+```json
+{"timestamp":"2027-01-01T00:00:00.000000+00:00","state":"moving","pan":123.456,"tilt":-87.654}
+```
+
+Pass `publish_host="..."` and `publish_port=...` to `Turntable(...)` or
+`find(...)` to select another bind endpoint. Pass `publish=False` to disable
+the publisher entirely. Publisher setup or send failures are logged and do not
+change controller state or interrupt device control.
+
 ```python
 import time
 

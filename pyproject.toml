@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.10.6",
     "pyserial>=3.5",
+    "pyzmq>=27.1.0",
     "textual>=1.0",
     "typing-extensions>=4.16.0",
 ]

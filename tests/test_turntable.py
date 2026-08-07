@@ -104,6 +104,7 @@ def wait_for(predicate, *, timeout=1.0):
 def make_turntable(fake, **kwargs):
     return turntable2.Turntable(
         serial_connection=fake,
+        publish=False,
         poll_interval=0.001,
         communication_timeout=kwargs.pop("communication_timeout", 1.0),
         acknowledgement_timeout=kwargs.pop("acknowledgement_timeout", 0.02),
@@ -1016,3 +1017,47 @@ def test_close_stops_threads_and_closes_serial_connection():
     assert fake.closed
     assert turntable.current_state() == turntable2.TurntableState.CLOSED
     turntable.close()
+
+
+def test_position_reports_are_offered_to_the_configured_publisher(monkeypatch):
+    published = []
+    lifecycle = []
+
+    class RecordingPublisher:
+        def __init__(self, *, host, port, logger):
+            lifecycle.append(("created", host, port))
+
+        def start(self):
+            lifecycle.append(("started",))
+
+        def publish(self, **update):
+            published.append(update)
+
+        def stop(self):
+            lifecycle.append(("stopped",))
+
+        def join(self, *, timeout):
+            lifecycle.append(("joined", timeout))
+
+    monkeypatch.setattr("anechoic_turntable.turntable.PositionPublisher", RecordingPublisher)
+    fake = FakeSerial()
+    turntable = turntable2.Turntable(
+        serial_connection=fake,
+        poll_interval=0.001,
+        communication_timeout=1.0,
+        publish_host="position-host",
+        publish_port=9_001,
+    )
+    try:
+        fake.emit_internal_position(pan=12.5, tilt=-3.25)
+        update = wait_for(lambda: published[-1] if published else None)
+
+        assert update["state"] == "not_set"
+        assert update["pan"] == 12.5
+        assert update["tilt"] == -3.25
+        assert update["timestamp"].tzinfo is not None
+        assert lifecycle[:2] == [("created", "position-host", 9_001), ("started",)]
+    finally:
+        turntable.close(join_timeout=0.5)
+
+    assert lifecycle[-2:] == [("stopped",), ("joined", 0.5)]
