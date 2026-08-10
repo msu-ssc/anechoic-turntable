@@ -81,3 +81,7 @@ Standardize everything on pan/tilt terminology
 ## 0.14.0 — 2026-08-07
 
 Add ZMQ publishing of turntable position
+
+## 0.15.0 — 2026-08-10
+
+Add support for firmware timeout error message.
