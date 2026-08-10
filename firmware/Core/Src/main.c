@@ -123,6 +123,9 @@ static float targetTiltDegrees = 0.0f;
 /** True while an accepted movement command is active. */
 static bool movementActive = false;
 
+/** HAL tick when the current movement command began. */
+static uint32_t movementStartedTick = 0U;
+
 /** True when pan is within TARGET_TOLERANCE_DEG of its target. */
 static bool panTargetReached = false;
 
@@ -180,6 +183,8 @@ static const char firmwareVersionMessage[] = "MSG:VERSION:" FIRMWARE_VERSION ";\
 /** Exact fail-safe report sent after an implausible encoder jump. */
 static const char positionDiscontinuityMessage[] = "MSG:ERR:POSITION_DISCONTINUITY;\r\n";
 
+/** Exact fail-safe report sent when movement exceeds its deadline. */
+static const char movementTimeoutMessage[] = "MSG:ERR:MOVEMENT_TIMEOUT;\r\n";
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -691,6 +696,8 @@ static void runMainLoopIteration(void)
     bool unableToParseFrameAvailable = false;
     bool emergencyStopAcknowledgementAvailable = false;
     bool positionDiscontinuityDetected = false;
+    bool movementTimeoutDetected = false;
+    uint32_t currentTick = HAL_GetTick();
     uint32_t copiedStopGeneration = 0;
 
     panPositionCounter = TIM2->CNT;
@@ -862,6 +869,10 @@ static void runMainLoopIteration(void)
                     requestedTilt = tiltCounterToDegrees(tiltCounter);
                     /* fall through */
                 case COMMAND_MOV:
+                {
+                    bool movementTargetChanged = !movementActive ||
+                            requestedPan != targetPanDegrees ||
+                            requestedTilt != targetTiltDegrees;
                     commandedPanDegrees = requestedPan;
                     commandedTiltDegrees = requestedTilt;
                     panTargetReached = false;
@@ -872,7 +883,12 @@ static void runMainLoopIteration(void)
                     targetTiltDegrees = commandedTiltDegrees;
                     panPwmPowerLevel = MAX_PWM_POWER_LEVEL;
                     tiltPwmPowerLevel = MAX_PWM_POWER_LEVEL;
+                    if (movementTargetChanged)
+                    {
+                        movementStartedTick = currentTick;
+                    }
                     break;
+                }
                 case COMMAND_SET:
                     movementActive = false;
                     controlMode = CONTROL_MODE_AUTOMATIC;
@@ -946,6 +962,23 @@ static void runMainLoopIteration(void)
         sendData(
                 positionDiscontinuityMessage,
                 (int)sizeof(positionDiscontinuityMessage) - 1);
+    }
+
+    if (movementActive &&
+            (uint32_t)(currentTick - movementStartedTick) >= MOVEMENT_TIMEOUT_MS)
+    {
+        movementActive = false;
+        controlMode = CONTROL_MODE_AUTOMATIC;
+        disablePanMotor();
+        disableTiltMotor();
+        movementTimeoutDetected = true;
+    }
+
+    if (movementTimeoutDetected)
+    {
+        sendData(
+                movementTimeoutMessage,
+                (int)sizeof(movementTimeoutMessage) - 1);
     }
 
     bool targetReached = panTargetReached && tiltTargetReached;

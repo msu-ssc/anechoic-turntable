@@ -2,6 +2,7 @@ import asyncio
 import datetime
 from types import SimpleNamespace
 
+import pytest
 from textual.widgets import Button
 from textual.widgets import Checkbox
 from textual.widgets import Input
@@ -251,13 +252,14 @@ def test_tui_formats_negative_acknowledgement_status():
     assert TurntableTui._format_parsed_event(event) == "nak: MOV (REJECTED)"
 
 
-def test_tui_formats_position_discontinuity_error():
+@pytest.mark.parametrize("reason", ["POSITION_DISCONTINUITY", "MOVEMENT_TIMEOUT"])
+def test_tui_formats_firmware_safety_error(reason):
     event = ReceivedMessageError(
-        message=b"MSG:ERR:POSITION_DISCONTINUITY;\r\n",
-        reason="POSITION_DISCONTINUITY",
+        message=f"MSG:ERR:{reason};\r\n".encode(),
+        reason=reason,
     )
 
-    assert TurntableTui._format_parsed_event(event) == "error: POSITION_DISCONTINUITY"
+    assert TurntableTui._format_parsed_event(event) == f"error: {reason}"
 
 
 def test_tui_rejects_malformed_counter_commands():

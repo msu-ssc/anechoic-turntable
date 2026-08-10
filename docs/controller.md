@@ -60,6 +60,11 @@ available as `most_recent_event(kind="version")`, a
 `ReceivedMessageVersion` whose `version` field contains the semantic version.
 Version responses do not count as position communication for timeout purposes.
 
+Firmware independently stops MOV and MOV_CNT operations that remain active for
+300 seconds and reports `MSG:ERR:MOVEMENT_TIMEOUT;`. The controller handles
+this like other firmware safety errors: it sends the immediate stop, invalidates
+trusted position and pending work, and enters `ERROR`.
+
 `request_counters()` queues `CMD:CNT;` without changing trusted position
 state. `set_counters(pan=..., tilt=...)` accepts unsigned 32-bit integer encoder
 counts and queues the corresponding SET_CNT frame. Exact responses are

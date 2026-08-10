@@ -124,13 +124,14 @@ def test_firmware_resets_completion_state_when_accepting_a_move() -> None:
     assert "float move_pan = 0.0f;" not in main_source
     assert "float move_tilt = 0.0f;" not in main_source
     movement_activation = re.search(
-        r"case COMMAND_MOV:\s+"
+        r"case COMMAND_MOV:\s+\{.*?"
         r"commandedPanDegrees = requestedPan;\s+"
         r"commandedTiltDegrees = requestedTilt;\s+"
         r"panTargetReached = false;\s+"
         r"tiltTargetReached = false;\s+"
         r"movementActive = true;",
         main_source,
+        re.DOTALL,
     )
     assert movement_activation is not None
 
@@ -147,6 +148,19 @@ def test_firmware_stops_on_position_discontinuity() -> None:
     assert '"MSG:ERR:POSITION_DISCONTINUITY;\\r\\n"' in main_source
     assert "previousPanCounter = TIM2->CNT;" in main_source
     assert "previousTiltCounter = TIM1->CNT;" in main_source
+
+
+def test_firmware_stops_when_movement_times_out() -> None:
+    """An active movement exceeding five minutes fails safe."""
+
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+    global_variables = (REPOSITORY_ROOT / "firmware/Core/Inc/globalvars.h").read_text(encoding="utf-8")
+
+    assert "static const uint32_t MOVEMENT_TIMEOUT_MS = 300000U;" in global_variables
+    assert "movementStartedTick = currentTick;" in main_source
+    assert "movementActive && !targetReachedAtCurrentSample" in main_source
+    assert "(uint32_t)(currentTick - movementStartedTick) >= MOVEMENT_TIMEOUT_MS" in main_source
+    assert '"MSG:ERR:MOVEMENT_TIMEOUT;\\r\\n"' in main_source
 
 
 def test_firmware_motor_control_uses_documented_named_constants() -> None:
