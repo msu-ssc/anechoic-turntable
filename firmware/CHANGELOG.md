@@ -94,3 +94,7 @@ BUGFIX: Fix race condition when starting movement directly after previous move f
 ## 3.2.2 — 2026-08-07
 
 Clean up code formatting in `firmware/Src/main.c`. No functional changes.
+
+## 3.3.0 — 2026-08-10
+
+Added timeout feature in firmware to detect no movement. After 300 seconds, if the firmware detects that the turntable did not make it to its destination, it will emergency stop and emit an error message.
