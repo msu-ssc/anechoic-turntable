@@ -65,6 +65,13 @@ Firmware independently stops MOV and MOV_CNT operations that remain active for
 this like other firmware safety errors: it sends the immediate stop, invalidates
 trusted position and pending work, and enters `ERROR`.
 
+Firmware also stops both motors and reports `MSG:ERR:MOVEMENT_STALLED;` when an
+axis that remains outside its target tolerance has the same encoder count at
+two consecutive checks made 3.0 seconds apart. Pan and tilt are evaluated
+independently, so an axis that has already reached its target does not trigger
+the watchdog. The controller handles this report through the same fail-safe
+error path.
+
 `request_counters()` queues `CMD:CNT;` without changing trusted position
 state. `set_counters(pan=..., tilt=...)` accepts unsigned 32-bit integer encoder
 counts and queues the corresponding SET_CNT frame. Exact responses are
@@ -199,9 +206,10 @@ Successfully parsed position lines become `ReceivedMessagePosition` events.
 Exact firmware version responses become `ReceivedMessageVersion` events, and
 exact encoder-counter responses become `ReceivedMessageCounter` events.
 Exact ACK and NAK frames become `ReceivedMessageAcknowledgement` events.
-The exact `MSG:ERR:POSITION_DISCONTINUITY;` safety report becomes a
-`ReceivedMessageError` event. The controller responds by sending an immediate
-stop, invalidating pending work and its trusted position, and entering `ERROR`.
+The exact `MSG:ERR:POSITION_DISCONTINUITY;`, `MSG:ERR:MOVEMENT_TIMEOUT;`, and
+`MSG:ERR:MOVEMENT_STALLED;` safety reports become `ReceivedMessageError`
+events. The controller responds by sending an immediate stop, invalidating
+pending work and its trusted position, and entering `ERROR`.
 These events intentionally preserve raw firmware pan and tilt. Use
 `current_position()` or `get_complete_state().corrected_position` for physical
 pan and tilt.

@@ -70,4 +70,8 @@ static const uint32_t UART_TRANSMIT_TIMEOUT_MS = 1000U;
 
 /** Maximum time an accepted movement command may remain active. */
 static const uint32_t MOVEMENT_TIMEOUT_MS = 300000U;
+
+/** Interval between encoder-progress checks during movement. */
+static const uint32_t MOVEMENT_STALL_CHECK_INTERVAL_MS = 3000U;
+
 #endif /* GLOBALVARS_H_ */

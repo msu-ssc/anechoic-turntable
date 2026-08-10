@@ -163,6 +163,23 @@ def test_firmware_stops_when_movement_times_out() -> None:
     assert '"MSG:ERR:MOVEMENT_TIMEOUT;\\r\\n"' in main_source
 
 
+def test_firmware_stops_when_a_commanded_axis_stalls() -> None:
+    """Either commanded axis unchanged between three-second checks fails safe."""
+
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+    global_variables = (REPOSITORY_ROOT / "firmware/Core/Inc/globalvars.h").read_text(encoding="utf-8")
+
+    assert "static const uint32_t MOVEMENT_STALL_CHECK_INTERVAL_MS = 3000U;" in global_variables
+    assert "(int32_t)(currentTick - nextMovementCheckTick) >= 0" in main_source
+    assert "panPositionCounter == panStallBaselineCounter" in main_source
+    assert "tiltPositionCounter == tiltStallBaselineCounter" in main_source
+    assert "panShouldMove" in main_source
+    assert "tiltShouldMove" in main_source
+    assert "nextMovementCheckTick = currentTick + MOVEMENT_STALL_CHECK_INTERVAL_MS;" in main_source
+    assert "resetMovementStallWatchdog(currentTick);" in main_source
+    assert '"MSG:ERR:MOVEMENT_STALLED;\\r\\n"' in main_source
+
+
 def test_firmware_motor_control_uses_documented_named_constants() -> None:
     """Motor tuning values are named and the old opaque expressions are gone."""
 

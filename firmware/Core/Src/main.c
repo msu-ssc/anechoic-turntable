@@ -175,6 +175,18 @@ static const char positionDiscontinuityMessage[] = "MSG:ERR:POSITION_DISCONTINUI
 
 /** Exact fail-safe report sent when movement exceeds its deadline. */
 static const char movementTimeoutMessage[] = "MSG:ERR:MOVEMENT_TIMEOUT;\r\n";
+
+/** Exact fail-safe report sent when a commanded axis stops changing. */
+static const char movementStalledMessage[] = "MSG:ERR:MOVEMENT_STALLED;\r\n";
+
+/** Most recent pan counter value observed by the movement-stall watchdog. */
+static uint32_t panStallBaselineCounter = 0U;
+
+/** Most recent tilt counter value observed by the movement-stall watchdog. */
+static uint32_t tiltStallBaselineCounter = 0U;
+
+/** HAL tick when the next movement-progress check is due. */
+static uint32_t nextMovementCheckTick = 0U;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -215,6 +227,7 @@ static const char *commandTypeName(CommandType commandType);
 static void runMainLoopIteration(void);
 static void driveAxis(MotorAxis axis, int pwmPowerLevel, MotorDirection direction);
 static void updateMotorControl(void);
+static void resetMovementStallWatchdog(uint32_t currentTick);
 
 /* USER CODE END PFP */
 
@@ -678,6 +691,7 @@ static void runMainLoopIteration(void)
     bool emergencyStopAcknowledgementAvailable = false;
     bool positionDiscontinuityDetected = false;
     bool movementTimeoutDetected = false;
+    bool movementStallDetected = false;
     uint32_t currentTick = HAL_GetTick();
     uint32_t copiedStopGeneration = 0;
 
@@ -706,6 +720,32 @@ static void runMainLoopIteration(void)
 
     panPositionDegrees = panCounterToDegrees(panPositionCounter);
     tiltPositionDegrees = tiltCounterToDegrees(tiltPositionCounter);
+    bool panShouldMove =
+            fabsf(panPositionDegrees - targetPanDegrees) > TARGET_TOLERANCE_DEG;
+    bool tiltShouldMove =
+            fabsf(tiltPositionDegrees - targetTiltDegrees) > TARGET_TOLERANCE_DEG;
+    bool targetReachedAtCurrentSample = !panShouldMove && !tiltShouldMove;
+
+    if (movementActive &&
+            (int32_t)(currentTick - nextMovementCheckTick) >= 0)
+    {
+        bool panStalled = panShouldMove &&
+                panPositionCounter == panStallBaselineCounter;
+        bool tiltStalled = tiltShouldMove &&
+                tiltPositionCounter == tiltStallBaselineCounter;
+
+        panStallBaselineCounter = panPositionCounter;
+        tiltStallBaselineCounter = tiltPositionCounter;
+        nextMovementCheckTick = currentTick + MOVEMENT_STALL_CHECK_INTERVAL_MS;
+
+        if (panStalled || tiltStalled)
+        {
+            movementActive = false;
+            disablePanMotor();
+            disableTiltMotor();
+            movementStallDetected = true;
+        }
+    }
     delayMilliseconds(MAIN_LOOP_DELAY_MS);
 
     /* Keep this critical section short so the ISR can resume framing quickly. */
@@ -863,6 +903,7 @@ static void runMainLoopIteration(void)
                     if (movementTargetChanged)
                     {
                         movementStartedTick = currentTick;
+                        resetMovementStallWatchdog(currentTick);
                     }
                     break;
                 }
@@ -939,7 +980,7 @@ static void runMainLoopIteration(void)
                 (int)sizeof(positionDiscontinuityMessage) - 1);
     }
 
-    if (movementActive &&
+    if (movementActive && !targetReachedAtCurrentSample &&
             (uint32_t)(currentTick - movementStartedTick) >= MOVEMENT_TIMEOUT_MS)
     {
         movementActive = false;
@@ -955,7 +996,17 @@ static void runMainLoopIteration(void)
                 (int)sizeof(movementTimeoutMessage) - 1);
     }
 
-    bool targetReachedAtCurrentSample = panTargetReached && tiltTargetReached;
+    if (movementStallDetected)
+    {
+        /* A command received in this loop must not restart motion after the fault. */
+        movementActive = false;
+        disablePanMotor();
+        disableTiltMotor();
+        sendData(
+                movementStalledMessage,
+                (int)sizeof(movementStalledMessage) - 1);
+    }
+
     if (movementActive && !targetReachedAtCurrentSample)
     {
         updateMotorControl();
@@ -1084,6 +1135,14 @@ static void updateMotorControl(void)
         disableTiltMotor();
         tiltTargetReached = true;
     }
+}
+
+/** @brief Start both per-axis movement-stall timers from current counters. */
+static void resetMovementStallWatchdog(uint32_t currentTick)
+{
+    panStallBaselineCounter = TIM2->CNT;
+    tiltStallBaselineCounter = TIM1->CNT;
+    nextMovementCheckTick = currentTick + MOVEMENT_STALL_CHECK_INTERVAL_MS;
 }
 
 

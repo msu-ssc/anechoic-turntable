@@ -414,6 +414,27 @@ do not produce this error. On receiving the error, the controller MUST send an
 immediate stop, invalidate its trusted position and pending work, and enter
 `ERROR`.
 
+For an active MOV or MOV_CNT operation, firmware MUST check encoder progress
+every 3.0 seconds. Each check compares the current pan and tilt counters with
+the corresponding counters captured by the previous check. An axis is supposed
+to move while its current position remains outside `TARGET_TOLERANCE_DEG` of
+its target. If an axis that is supposed to move has exactly the same encoder
+count at two consecutive checks, firmware MUST immediately stop both motors,
+cancel the active move, and emit exactly:
+
+```text
+MSG:ERR:MOVEMENT_STALLED;\r\n
+```
+
+Acceptance of a new movement target MUST capture both current encoder counters
+and schedule the first check for 3.0 seconds later. After each successful
+check, firmware MUST capture both current counters and schedule the next check
+for 3.0 seconds after the current check. Repetition of the same active target
+MUST NOT restart this schedule. An axis already within target tolerance MUST
+NOT produce a stall error. On receiving the error, the controller MUST send an
+immediate stop, invalidate its trusted position and pending work, and enter
+`ERROR`.
+
 Firmware MUST limit each MOV or MOV_CNT operation to 300 seconds, measured from
 acceptance of a new movement target. Repetition of the same active target MUST
 NOT restart this deadline. If the target has not been reached when the deadline
