@@ -102,3 +102,7 @@ Added timeout feature in firmware to detect no movement. After 300 seconds, if t
 ## 3.4.0 — 2026-08-11
 
 Remove control_mode_manual from firmware.
+
+## 3.5.0 — 2026-08-11
+
+Firmware will now detect if there is no movement and stop the motors.
