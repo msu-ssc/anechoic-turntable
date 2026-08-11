@@ -57,13 +57,6 @@ UART_HandleTypeDef huart1;
 /** Maximum command payload length before the terminating semicolon. */
 enum { RECEIVE_FRAME_CAPACITY = 64 };
 
-/** State of the optional legacy keyboard-control path. */
-typedef enum
-{
-    CONTROL_MODE_AUTOMATIC,
-    CONTROL_MODE_MANUAL
-} ControlMode;
-
 /** Motor axis identifiers used by driveAxis(). */
 typedef enum
 {
@@ -131,9 +124,6 @@ static bool panTargetReached = false;
 
 /** True when tilt is within TARGET_TOLERANCE_DEG of its target. */
 static bool tiltTargetReached = false;
-
-/** Current automatic or legacy manual control mode. */
-static ControlMode controlMode = CONTROL_MODE_AUTOMATIC;
 
 /** Bytes accumulated for the frame currently arriving over UART. */
 static char receiveFrameBuffer[RECEIVE_FRAME_CAPACITY];
@@ -241,15 +231,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     (void)huart;
 
-    /* Preserve the dormant legacy keyboard-control behavior. */
-    if (receivedByte == 'a' || receivedByte == 'd' ||
-            receivedByte == 'w' || receivedByte == 's')
-    {
-        receivedByte = 0;
-        pendingCommandState = 0;
-        controlMode = CONTROL_MODE_MANUAL;
-    }
-    else if (receivedByte == 'p')
+    if (receivedByte == 'p')
     {
         if (pendingCommandState == 1 && rejectedFrameCount < UINT32_MAX)
         {
@@ -269,7 +251,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         }
 
         movementActive = false;
-        controlMode = CONTROL_MODE_AUTOMATIC;
         receivedByte = 0;
         disablePanMotor();
         disableTiltMotor();
@@ -715,7 +696,6 @@ static void runMainLoopIteration(void)
                       MAX_POSITION_CHANGE_COUNTS)))
     {
         movementActive = false;
-        controlMode = CONTROL_MODE_AUTOMATIC;
         disablePanMotor();
         disableTiltMotor();
         positionDiscontinuityDetected = true;
@@ -837,7 +817,6 @@ static void runMainLoopIteration(void)
         else if (!commandParsed || commandRejected)
         {
             movementActive = false;
-            controlMode = CONTROL_MODE_AUTOMATIC;
             disablePanMotor();
             disableTiltMotor();
         }
@@ -852,7 +831,6 @@ static void runMainLoopIteration(void)
                     break;
                 case COMMAND_SET_CNT:
                     movementActive = false;
-                    controlMode = CONTROL_MODE_AUTOMATIC;
                     disablePanMotor();
                     disableTiltMotor();
                     TIM2->CNT = panCounter;
@@ -878,7 +856,6 @@ static void runMainLoopIteration(void)
                     panTargetReached = false;
                     tiltTargetReached = false;
                     movementActive = true;
-                    controlMode = CONTROL_MODE_AUTOMATIC;
                     targetPanDegrees = commandedPanDegrees;
                     targetTiltDegrees = commandedTiltDegrees;
                     panPwmPowerLevel = MAX_PWM_POWER_LEVEL;
@@ -891,7 +868,6 @@ static void runMainLoopIteration(void)
                 }
                 case COMMAND_SET:
                     movementActive = false;
-                    controlMode = CONTROL_MODE_AUTOMATIC;
                     TIM1->CNT = tiltDegreesToCounter(setTiltDegrees);
                     TIM2->CNT = panDegreesToCounter(setPanDegrees);
                     previousPanCounter = TIM2->CNT;
@@ -956,7 +932,6 @@ static void runMainLoopIteration(void)
     {
         /* A command received in this loop must not restart motion after the fault. */
         movementActive = false;
-        controlMode = CONTROL_MODE_AUTOMATIC;
         disablePanMotor();
         disableTiltMotor();
         sendData(
@@ -968,7 +943,6 @@ static void runMainLoopIteration(void)
             (uint32_t)(currentTick - movementStartedTick) >= MOVEMENT_TIMEOUT_MS)
     {
         movementActive = false;
-        controlMode = CONTROL_MODE_AUTOMATIC;
         disablePanMotor();
         disableTiltMotor();
         movementTimeoutDetected = true;
@@ -981,14 +955,10 @@ static void runMainLoopIteration(void)
                 (int)sizeof(movementTimeoutMessage) - 1);
     }
 
-    bool targetReached = panTargetReached && tiltTargetReached;
-    if (movementActive && !targetReached && controlMode == CONTROL_MODE_AUTOMATIC)
+    bool targetReachedAtCurrentSample = panTargetReached && tiltTargetReached;
+    if (movementActive && !targetReachedAtCurrentSample)
     {
         updateMotorControl();
-    }
-    else if (controlMode == CONTROL_MODE_MANUAL)
-    {
-        movementActive = false;
     }
     else
     {
