@@ -85,3 +85,7 @@ Add ZMQ publishing of turntable position
 ## 0.15.0 — 2026-08-10
 
 Add support for firmware timeout error message.
+
+## 0.16.0 — 2026-08-11
+
+Controller has an error message for movement stalls.
