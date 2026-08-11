@@ -970,6 +970,13 @@ static void runMainLoopIteration(void)
         }
     }
 
+    /* A newly accepted MOV changes the target after the position was sampled. */
+    panShouldMove =
+            fabsf(panPositionDegrees - targetPanDegrees) > TARGET_TOLERANCE_DEG;
+    tiltShouldMove =
+            fabsf(tiltPositionDegrees - targetTiltDegrees) > TARGET_TOLERANCE_DEG;
+    targetReachedAtCurrentSample = !panShouldMove && !tiltShouldMove;
+
     if (positionDiscontinuityDetected)
     {
         /* A command received in this loop must not restart motion after the fault. */
