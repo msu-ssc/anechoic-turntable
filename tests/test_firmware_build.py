@@ -171,8 +171,8 @@ def test_firmware_stops_when_a_commanded_axis_stalls() -> None:
 
     assert "static const uint32_t MOVEMENT_STALL_CHECK_INTERVAL_MS = 3000U;" in global_variables
     assert "(int32_t)(currentTick - nextMovementCheckTick) >= 0" in main_source
-    assert "panPositionCounter == panStallBaselineCounter" in main_source
-    assert "tiltPositionCounter == tiltStallBaselineCounter" in main_source
+    assert "panPositionCounter == panCounterAtLastMovementCheck" in main_source
+    assert "tiltPositionCounter == tiltCounterAtLastMovementCheck" in main_source
     assert "panShouldMove" in main_source
     assert "tiltShouldMove" in main_source
     assert "nextMovementCheckTick = currentTick + MOVEMENT_STALL_CHECK_INTERVAL_MS;" in main_source

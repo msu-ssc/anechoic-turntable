@@ -179,11 +179,11 @@ static const char movementTimeoutMessage[] = "MSG:ERR:MOVEMENT_TIMEOUT;\r\n";
 /** Exact fail-safe report sent when a commanded axis stops changing. */
 static const char movementStalledMessage[] = "MSG:ERR:MOVEMENT_STALLED;\r\n";
 
-/** Most recent pan counter value observed by the movement-stall watchdog. */
-static uint32_t panStallBaselineCounter = 0U;
+/** Pan encoder counter captured by the previous movement-progress check. */
+static uint32_t panCounterAtLastMovementCheck = 0U;
 
-/** Most recent tilt counter value observed by the movement-stall watchdog. */
-static uint32_t tiltStallBaselineCounter = 0U;
+/** Tilt encoder counter captured by the previous movement-progress check. */
+static uint32_t tiltCounterAtLastMovementCheck = 0U;
 
 /** HAL tick when the next movement-progress check is due. */
 static uint32_t nextMovementCheckTick = 0U;
@@ -726,16 +726,17 @@ static void runMainLoopIteration(void)
             fabsf(tiltPositionDegrees - targetTiltDegrees) > TARGET_TOLERANCE_DEG;
     bool targetReachedAtCurrentSample = !panShouldMove && !tiltShouldMove;
 
+    // Check if there is a stall.
     if (movementActive &&
             (int32_t)(currentTick - nextMovementCheckTick) >= 0)
     {
         bool panStalled = panShouldMove &&
-                panPositionCounter == panStallBaselineCounter;
+                panPositionCounter == panCounterAtLastMovementCheck;
         bool tiltStalled = tiltShouldMove &&
-                tiltPositionCounter == tiltStallBaselineCounter;
+                tiltPositionCounter == tiltCounterAtLastMovementCheck;
 
-        panStallBaselineCounter = panPositionCounter;
-        tiltStallBaselineCounter = tiltPositionCounter;
+        panCounterAtLastMovementCheck = panPositionCounter;
+        tiltCounterAtLastMovementCheck = tiltPositionCounter;
         nextMovementCheckTick = currentTick + MOVEMENT_STALL_CHECK_INTERVAL_MS;
 
         if (panStalled || tiltStalled)
@@ -1140,8 +1141,8 @@ static void updateMotorControl(void)
 /** @brief Start both per-axis movement-stall timers from current counters. */
 static void resetMovementStallWatchdog(uint32_t currentTick)
 {
-    panStallBaselineCounter = TIM2->CNT;
-    tiltStallBaselineCounter = TIM1->CNT;
+    panCounterAtLastMovementCheck = TIM2->CNT;
+    tiltCounterAtLastMovementCheck = TIM1->CNT;
     nextMovementCheckTick = currentTick + MOVEMENT_STALL_CHECK_INTERVAL_MS;
 }
 
