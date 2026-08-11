@@ -169,7 +169,7 @@ def test_firmware_stops_when_a_commanded_axis_stalls() -> None:
     main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
     global_variables = (REPOSITORY_ROOT / "firmware/Core/Inc/globalvars.h").read_text(encoding="utf-8")
 
-    assert "static const uint32_t MOVEMENT_STALL_CHECK_INTERVAL_MS = 3000U;" in global_variables
+    assert "static const uint32_t MOVEMENT_STALL_CHECK_INTERVAL_MS = 500U;" in global_variables
     assert "(int32_t)(currentTick - nextMovementCheckTick) >= 0" in main_source
     assert "panPositionCounter == panCounterAtLastMovementCheck" in main_source
     assert "tiltPositionCounter == tiltCounterAtLastMovementCheck" in main_source
