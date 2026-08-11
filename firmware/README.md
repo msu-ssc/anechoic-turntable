@@ -34,6 +34,13 @@ immediately stops both motors and emits
 `MSG:ERR:POSITION_DISCONTINUITY;` followed by CRLF. SET and SET_CNT reset the
 comparison baseline after their intentional counter changes.
 
+Firmware also checks progress on each axis every 3.0 seconds during MOV and
+MOV_CNT. If an axis remains outside target tolerance and its encoder count is
+unchanged from the previous check, firmware immediately stops both motors and
+emits `MSG:ERR:MOVEMENT_STALLED;` followed by CRLF. An axis already at its
+target is not treated as stalled, and repeating the same active target does not
+restart the check schedule.
+
 Each MOV or MOV_CNT operation also has a firmware-enforced 300-second deadline.
 If a new movement target remains active beyond that deadline, firmware stops
 both motors and emits `MSG:ERR:MOVEMENT_TIMEOUT;` followed by CRLF. A repeated

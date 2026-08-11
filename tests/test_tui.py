@@ -252,7 +252,7 @@ def test_tui_formats_negative_acknowledgement_status():
     assert TurntableTui._format_parsed_event(event) == "nak: MOV (REJECTED)"
 
 
-@pytest.mark.parametrize("reason", ["POSITION_DISCONTINUITY", "MOVEMENT_TIMEOUT"])
+@pytest.mark.parametrize("reason", ["POSITION_DISCONTINUITY", "MOVEMENT_TIMEOUT", "MOVEMENT_STALLED"])
 def test_tui_formats_firmware_safety_error(reason):
     event = ReceivedMessageError(
         message=f"MSG:ERR:{reason};\r\n".encode(),

@@ -173,7 +173,7 @@ def test_counter_response_becomes_a_typed_event():
     assert hash(event)
 
 
-@pytest.mark.parametrize("reason", ["POSITION_DISCONTINUITY", "MOVEMENT_TIMEOUT"])
+@pytest.mark.parametrize("reason", ["POSITION_DISCONTINUITY", "MOVEMENT_TIMEOUT", "MOVEMENT_STALLED"])
 def test_firmware_safety_error_becomes_a_typed_error_event(reason):
     event = turntable2.parse_received_message(f"MSG:ERR:{reason};\r\n".encode())
 
@@ -864,7 +864,7 @@ def test_matching_nak_fails_move_without_retry_and_stops_motion():
         turntable.close()
 
 
-@pytest.mark.parametrize("reason", ["POSITION_DISCONTINUITY", "MOVEMENT_TIMEOUT"])
+@pytest.mark.parametrize("reason", ["POSITION_DISCONTINUITY", "MOVEMENT_TIMEOUT", "MOVEMENT_STALLED"])
 def test_firmware_safety_error_stops_and_invalidates_position(reason):
     fake = FakeSerial()
     turntable = make_turntable(fake)
