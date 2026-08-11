@@ -495,15 +495,3 @@ Firmware uses the recognized command token in a NAK when possible. It uses
 frame whose buffered prefix has been discarded. An unterminated partial frame
 cannot be acknowledged until it is terminated, discarded as oversized, or
 interrupted by emergency stop.
-
-## Current implementation deviations
-
-These are known differences between the authoritative contract and the current
-firmware implementation. They are defects or technical debt, not protocol
-features that future implementations should preserve.
-
-1. Historical single-character manual-control inputs (`a`, `d`, `w`, and `s`)
-   are recognized by firmware but are not part of the controller protocol.
-
-Compatibility tests should be added when these deviations are corrected so
-they do not recur.
