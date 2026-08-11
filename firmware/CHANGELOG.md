@@ -106,3 +106,7 @@ Remove control_mode_manual from firmware.
 ## 3.5.0 — 2026-08-11
 
 Firmware will now detect if there is no movement and stop the motors.
+
+## 3.5.1 — 2026-08-11
+
+Firmware will now properly update target-reached state.
