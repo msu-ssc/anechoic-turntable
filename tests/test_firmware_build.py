@@ -136,6 +136,24 @@ def test_firmware_resets_completion_state_when_accepting_a_move() -> None:
     assert movement_activation is not None
 
 
+def test_firmware_rechecks_position_against_a_new_movement_target() -> None:
+    """A newly accepted MOV is not stopped using the previous target state."""
+
+    main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
+
+    target_update = main_source.index("targetPanDegrees = commandedPanDegrees;")
+    target_state_refresh = main_source.index(
+        "targetReachedAtCurrentSample = !panShouldMove && !tiltShouldMove;",
+        target_update,
+    )
+    motor_control = main_source.index(
+        "if (movementActive && !targetReachedAtCurrentSample)",
+        target_state_refresh,
+    )
+
+    assert target_update < target_state_refresh < motor_control
+
+
 def test_firmware_stops_on_position_discontinuity() -> None:
     """A moving counter jump greater than one degree fails safe."""
 
