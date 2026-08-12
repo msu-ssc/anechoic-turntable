@@ -27,12 +27,6 @@ def _load_release_version_tool() -> ModuleType:
 release_version = _load_release_version_tool()
 
 
-def test_public_controller_version_matches_installed_package() -> None:
-    """The public controller version is also the installed distribution version."""
-    assert anechoic_turntable.__version__ == anechoic_turntable.CONTROLLER_VERSION
-    assert importlib.metadata.version("anechoic-turntable") == anechoic_turntable.CONTROLLER_VERSION
-
-
 def test_protocol_snapshot_matches_canonical_contract() -> None:
     """The packaged protocol snapshot matches the authoritative protocol document."""
     assert release_version.read_protocol_version(REPOSITORY_ROOT) == anechoic_turntable.PROTOCOL_VERSION

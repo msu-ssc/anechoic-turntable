@@ -73,7 +73,7 @@ class FakeSerial:
 
     @staticmethod
     def _command_name(data):
-        if data == b"p":
+        if data == b"%":
             return "EMERGENCY_STOP"
         for command in ("MOV_CNT", "SET_CNT", "VERSION", "SET", "MOV", "CNT"):
             if data.startswith(f"CMD:{command}".encode()):
@@ -611,8 +611,8 @@ def test_abort_stops_the_active_move_and_cancels_queued_moves():
         turntable.abort()
 
         # ABORT bypasses the queue and performs the stop write before returning.
-        assert fake.writes[writes_before_abort:] == [b"p"] * 5
-        assert turntable.command_history()[-1].command == b"p"
+        assert fake.writes[writes_before_abort:] == [b"%"] * 5
+        assert turntable.command_history()[-1].command == b"%"
         assert turntable.current_state() == turntable2.TurntableState.STOPPED
         acknowledgement = wait_for(lambda: event if (event := turntable.most_recent_event(kind="acknowledgement")) is not None and event.command == "EMERGENCY_STOP" else None)
         assert acknowledgement.status == "ACK"
@@ -628,8 +628,8 @@ def test_abort_uses_custom_repeat_count():
     try:
         turntable.abort(repeat_count=2)
 
-        assert fake.writes == [b"p", b"p"]
-        assert [write.command for write in turntable.command_history()] == [b"p", b"p"]
+        assert fake.writes == [b"%", b"%"]
+        assert [write.command for write in turntable.command_history()] == [b"%", b"%"]
     finally:
         turntable.close()
 
@@ -834,7 +834,7 @@ def test_command_is_retried_only_while_acknowledgement_is_missing():
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.ERROR)
         move_frame = b"CMD:MOV:10.000,0.000;"
         assert fake.writes[writes_before_move:].count(move_frame) == 3
-        assert fake.writes[writes_before_move:].count(b"p") == 5
+        assert fake.writes[writes_before_move:].count(b"%") == 5
         assert isinstance(turntable.last_error(), TimeoutError)
         assert "No acknowledgement received for MOV" in str(turntable.last_error())
     finally:
@@ -856,7 +856,7 @@ def test_matching_nak_fails_move_without_retry_and_stops_motion():
         fake.emit(b"MSG:NAK:MOV,REJECTED;\r\n")
 
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.ERROR)
-        assert fake.writes[writes_before_move:] == [b"CMD:MOV:10.000,0.000;", *([b"p"] * 5)]
+        assert fake.writes[writes_before_move:] == [b"CMD:MOV:10.000,0.000;", *([b"%"] * 5)]
         assert "Firmware rejected MOV: REJECTED" in str(turntable.last_error())
         event = turntable.most_recent_event(kind="acknowledgement")
         assert event.status == "NAK"
@@ -878,7 +878,7 @@ def test_firmware_safety_error_stops_and_invalidates_position(reason):
         fake.emit_internal_position(pan=5, tilt=0)
 
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.ERROR)
-        assert fake.writes[writes_before_error:] == [b"p"] * 5
+        assert fake.writes[writes_before_error:] == [b"%"] * 5
         assert turntable.current_position() is not None
         assert turntable.get_complete_state().has_been_set is False
         assert f"Firmware reported {reason}" in str(turntable.last_error())
@@ -948,7 +948,7 @@ def test_move_timeout_aborts_and_is_observable():
 
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.TIMED_OUT)
         assert isinstance(turntable.last_error(), TimeoutError)
-        assert fake.writes.count(b"p") == 5
+        assert fake.writes.count(b"%") == 5
     finally:
         turntable.close()
 
@@ -1005,7 +1005,7 @@ def test_communication_loss_during_move_sends_default_stop_repetitions():
         turntable.move_to(pan=10, tilt=0, move_timeout=1)
 
         wait_for(lambda: turntable.current_state() == turntable2.TurntableState.NO_COMMUNICATION)
-        assert fake.writes.count(b"p") == 5
+        assert fake.writes.count(b"%") == 5
     finally:
         turntable.close()
 

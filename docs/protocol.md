@@ -1,5 +1,5 @@
 # Turntable Firmware–Controller Protocol Contract
-PROTOCOL_VERSION=3.3.0
+PROTOCOL_VERSION=4.0.0
 
 This document is the authoritative contract between the STM32 turntable
 firmware and the Python controller. If an implementation differs from this
@@ -224,7 +224,7 @@ specified below.
 Immediate stop is the single ASCII byte:
 
 ```text
-p
+%
 ```
 
 It has no semicolon or newline.
@@ -234,14 +234,14 @@ the active move. Position reporting MUST continue. Firmware MUST emit
 `MSG:ACK:EMERGENCY_STOP;\r\n`; transmission of this acknowledgement may occur
 after the motors have been disabled and MUST NOT delay the immediate stop.
 
-Every controller-side immediate stop writes `p` consecutively five times by
+Every controller-side immediate stop writes `%` consecutively five times by
 default. `abort(*, repeat_count=5)` immediately invalidates active and queued
 work, then uses its keyword-only `repeat_count`; the method returns after every
 requested write has been attempted. `repeat_count` MUST be an integer greater
 than or equal to one. The diagnostic TUI emergency-stop and disconnect paths
 use the default.
 
-Firmware treats every `p` as an independent accepted emergency-stop command
+Firmware treats every `%` as an independent accepted emergency-stop command
 and emits one `MSG:ACK:EMERGENCY_STOP;\r\n` for each byte. The controller does
 not wait for these acknowledgements and does not retry an individual stop byte.
 
@@ -252,30 +252,7 @@ The same default of five consecutive writes applies when:
 - a MOV or MOV_CNT receives a NAK;
 - a MOV or MOV_CNT exhausts its acknowledgement attempts.
 
-Bytes such as `a`, `d`, `w`, and `s` that may be recognized by historical
-firmware are outside this contract. Normal controller operations MUST NOT send
-them.
-
-### Diagnostic raw writes
-
-The diagnostic TUI MAY expose an explicitly named `raw` operation for firmware
-development. This is an escape hatch from the normal command contract, not a
-new firmware command:
-
-- its ASCII payload is written exactly once without command, framing, or
-  coordinate validation;
-- it MUST use the controller's serialized write path rather than accessing the
-  serial connection directly;
-- it MUST wait behind any active tracked operation;
-- after the write, the controller MUST discard its trusted coordinate frame and
-  require SET or explicit position confirmation before another normal move;
-- it MUST NOT replace immediate abort, because a queued raw `p` is not an
-  immediate stop.
-
-An operator using `raw` is responsible for the complete payload, including any
-required semicolon. Unknown bytes and unsafe coordinate targets retain the
-firmware behavior described elsewhere in this contract; the controller provides
-no completion tracking for a raw command.
+Note: The emergency stop character was 'p' until protocol version 4.0.0, in which it was changed to '%'. The first firmware release using '%' is 4.0.0, and the first compatible controller release is 1.0.0.
 
 ## Command acknowledgement, retry, and idempotence
 

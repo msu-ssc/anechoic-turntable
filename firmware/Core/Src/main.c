@@ -244,7 +244,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     (void)huart;
 
-    if (receivedByte == 'p')
+    if (receivedByte == '%')
     {
         if (pendingCommandState == 1 && rejectedFrameCount < UINT32_MAX)
         {

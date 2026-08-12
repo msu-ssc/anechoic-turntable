@@ -901,7 +901,7 @@ class ControllerThread(threading.Thread):
 
     def _write_stop(self, *, repeat_count: int = EMERGENCY_STOP_REPEAT_COUNT) -> None:
         for _ in range(repeat_count):
-            self._write_command(b"p")
+            self._write_command(b"%")
 
     def _invalidate_pending_commands(self) -> None:
         self._pending_acknowledgement = None

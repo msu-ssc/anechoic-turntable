@@ -106,6 +106,7 @@ def test_firmware_acknowledges_accepted_and_rejected_commands() -> None:
 
     main_source = (REPOSITORY_ROOT / "firmware/Core/Src/main.c").read_text(encoding="utf-8")
 
+    assert "receivedByte == '%'" in main_source
     assert '"MSG:ACK:%s;\\r\\n"' in main_source
     assert '"MSG:NAK:%s,%s;\\r\\n"' in main_source
     assert 'sendAcknowledgement("EMERGENCY_STOP", true, NULL);' in main_source
