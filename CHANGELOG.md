@@ -89,3 +89,11 @@ Add support for firmware timeout error message.
 ## 0.16.0 — 2026-08-11
 
 Controller has an error message for movement stalls.
+
+## 1.0.0 — 2026-08-12
+
+Release 1.0.0. First stable release. All versioning after this will adhere to [semantic versioning](https://semver.org/).
+
+Specific change in this release:
+- Implement protocol version 4.0.0, namely changing the emergency stop character from 'p' to '%'.
+- No end user-facing changes.
