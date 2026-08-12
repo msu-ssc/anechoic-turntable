@@ -141,6 +141,12 @@ empirically derived acceleration-aware curves for the pan and tilt axes, then
 returns the larger estimate because both axes move concurrently. It does not
 include a timeout safety margin.
 
+The package-level `estimate_movement_time()` function estimates between any two
+positions without needing a `Turntable` instance or current position report.
+Pass either `current` and `target` as `PanTilt` objects, or all of `current_pan`,
+`current_tilt`, `target_pan`, and `target_tilt`. Like `estimate_time()`, it
+performs no movement and does not include a timeout safety margin.
+
 When `move_timeout` is omitted or `None`, `move_to` uses
 `estimate_time * 1.5 + 5 seconds`. A positive custom timeout can be provided for
 an individual move. See [Travel-time estimates](travel-time-estimates.md) for

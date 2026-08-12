@@ -5,6 +5,12 @@ will take from the most recently reported physical position. A current position
 report is required. The estimate does not command movement and does not include
 a timeout safety margin.
 
+The package-level `estimate_movement_time()` function applies the same model
+between any two positions without requiring a `Turntable` instance or current
+position report. It accepts either `current=PanTilt(...)` and
+`target=PanTilt(...)`, or the four scalar arguments `current_pan`,
+`current_tilt`, `target_pan`, and `target_tilt`.
+
 For an absolute axis change `d` in degrees, the controller uses these empirical
 curves:
 
