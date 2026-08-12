@@ -3,6 +3,9 @@
 # Ignore this because it generates a pointless hash every time STM32CubeIDE builds the firmware
 firmware/.settings/language.settings.xml
 
+# Ignore HWIL test artifacts generated with default filename
+turntable-hwil-*json
+
 # END Project-specific ignores
 
 
