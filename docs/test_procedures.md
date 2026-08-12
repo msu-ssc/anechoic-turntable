@@ -3,7 +3,7 @@
 The preferred basic compatibility check is the supervised HWIL runner:
 
 ```shell
-uv run anechoic-turntable-hwil
+uv run anechoic-turntable-hwil-basic
 ```
 
 Use `--port /dev/...` to bypass serial-port discovery or `--report PATH` to
@@ -40,6 +40,10 @@ trace, whose position lines update at about 3 Hz with three decimal places.
 Movement position lines show both the current coordinates and the remaining
 signed pan/tilt delta to the target. All operator-facing angles include an
 explicit `+` or `-` sign.
+
+The final check starts at pan `+0°`, tilt `+0°`, commands a move to pan `+90°`,
+and sends the emergency stop as soon as reported pan passes `+20°`. The
+operator must confirm that the physical stop was immediate and safe.
 
 ## Quick Test Procedure
 Run through these commands before actually testing changes you made:

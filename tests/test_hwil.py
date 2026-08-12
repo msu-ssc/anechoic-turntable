@@ -5,10 +5,10 @@ import pytest
 
 from anechoic_turntable.controller import CommandWrite
 from anechoic_turntable.controller import TurntableState
-from anechoic_turntable.hwil import HardwareTestError
-from anechoic_turntable.hwil import HardwareTestRunner
-from anechoic_turntable.hwil import OperatorCancelled
-from anechoic_turntable.hwil import main
+from anechoic_turntable.hwil.basic import HardwareTestError
+from anechoic_turntable.hwil.basic import HardwareTestRunner
+from anechoic_turntable.hwil.basic import OperatorCancelled
+from anechoic_turntable.hwil.basic import main
 from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
@@ -39,12 +39,14 @@ class FakeHardwareTurntable:
         self.move_calls = []
         self.abort_calls = 0
         self.abort_error = None
+        self.abort_error_on_call = 1
         self.closed = False
 
     def abort(self):
         self.abort_calls += 1
-        if self.abort_error is not None:
+        if self.abort_error is not None and self.abort_calls >= self.abort_error_on_call:
             raise self.abort_error
+        self.state = TurntableState.STOPPED
 
     def close(self):
         self.closed = True
@@ -78,6 +80,13 @@ class FakeHardwareTurntable:
         self.position = PanTilt(pan=pan, tilt=tilt)
         self._record_position(self.position)
         self.state = TurntableState.STOPPED
+
+    def move_to(self, *, pan, tilt, move_timeout=None):
+        self.move_calls.append((pan, tilt, move_timeout))
+        self._record_command("MOV", f"CMD:MOV:{pan:.3f},{tilt:.3f};".encode())
+        self.position = PanTilt(pan=20.5, tilt=0.0)
+        self._record_position(self.position)
+        self.state = TurntableState.MOVING
 
     def request_version(self):
         self._record_command("VERSION", b"CMD:VERSION;")
@@ -147,6 +156,8 @@ def test_hwil_runner_repeats_centering_then_runs_basic_movement_sequence(monkeyp
             "y",  # pan +5 approval and observation
             "y",
             "y",  # return home
+            "y",  # begin emergency-stop movement
+            "y",  # emergency stop appeared safe
             "y",
             "y",  # tilt +5
             "y",
@@ -169,14 +180,18 @@ def test_hwil_runner_repeats_centering_then_runs_basic_movement_sequence(monkeyp
         (0.0, 0.0),
         (0.0, 5.0),
         (0.0, 0.0),
+        (90.0, 0.0),
     ]
-    assert table.abort_calls == 1
+    assert table.abort_calls == 2
     rendered = capsys.readouterr().out
     assert "Interactive centering" in rendered
     assert "b'CMD:MOV:5.000,0.000;'" in rendered
     assert "The turntable will move RIGHT 5°." in rendered
     assert "Did the motion complete, and is the current position pan=+5°, tilt=+0°? [y/N]" in rendered
     assert "PASS: Basic functionality HWIL test completed." in rendered
+    assert "Emergency-stop check" in rendered
+    assert report["emergency_stop"]["stop_position"]["pan"] > 20.0
+    assert report["emergency_stop"]["stop_sent"]
 
 
 def test_declining_a_required_movement_cancels_and_stops(monkeypatch):
@@ -232,6 +247,7 @@ def test_rejecting_observed_motion_fails_and_stops_without_continuing(monkeypatc
 def test_final_stop_failure_prevents_a_passing_result(monkeypatch):
     table = FakeHardwareTurntable()
     table.abort_error = OSError("serial link lost")
+    table.abort_error_on_call = 2
     runner = make_runner(
         table,
         [
@@ -244,6 +260,8 @@ def test_final_stop_failure_prevents_a_passing_result(monkeypatch):
             "y",  # pan +5
             "y",
             "y",  # return home
+            "y",  # begin emergency-stop movement
+            "y",  # emergency stop appeared safe
             "y",
             "y",  # tilt +5
             "y",
@@ -257,6 +275,20 @@ def test_final_stop_failure_prevents_a_passing_result(monkeypatch):
 
     assert runner.report["status"] == "failed"
     assert runner.report["final_stop_error"] == "serial link lost"
+
+
+def test_emergency_stop_is_sent_after_pan_passes_twenty_degrees(monkeypatch):
+    table = FakeHardwareTurntable()
+    runner = make_runner(table, ["y", "y"], monkeypatch)
+    table.position = PanTilt(pan=0.0, tilt=0.0)
+    table.state = TurntableState.STOPPED
+
+    runner._run_emergency_stop_test()
+
+    assert table.move_calls[-1][0:2] == (90.0, 0.0)
+    assert runner.report["emergency_stop"]["stop_position"]["pan"] == 20.5
+    assert runner.report["emergency_stop"]["stop_sent"]
+    assert table.abort_calls == 1
 
 
 def test_operator_movement_text_uses_directions_and_rounded_degrees():
@@ -276,7 +308,7 @@ def test_cli_prints_title_and_connection_status_before_discovery(monkeypatch, ca
         assert output.index("Basic functionality HWIL test") < output.index("Trying to connect...")
         raise OSError("not connected")
 
-    monkeypatch.setattr("anechoic_turntable.hwil.Turntable.find", fail_discovery)
+    monkeypatch.setattr("anechoic_turntable.hwil.basic.Turntable.find", fail_discovery)
 
     assert main([]) == 1
 

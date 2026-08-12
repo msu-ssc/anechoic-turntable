@@ -19,6 +19,7 @@ from anechoic_turntable._version import CONTROLLER_VERSION
 from anechoic_turntable._version import PROTOCOL_VERSION
 from anechoic_turntable._version import REFERENCE_FIRMWARE_VERSION
 from anechoic_turntable.controller import ABSOLUTE_PAN_BOUNDS
+from anechoic_turntable.controller import ALLOWABLE_DISCREPANCY_DEG
 from anechoic_turntable.controller import MOVE_TIMEOUT_ESTIMATE_MULTIPLIER
 from anechoic_turntable.controller import MOVE_TIMEOUT_MARGIN_SECONDS
 from anechoic_turntable.controller import SET_TILT_BOUNDS
@@ -76,6 +77,7 @@ class HardwareTestRunner:
             self._run_preflight()
             self._center_interactively()
             self._run_basic_movements()
+            self._run_emergency_stop_test()
         except OperatorCancelled:
             self.report["status"] = "cancelled"
             raise
@@ -267,6 +269,63 @@ class HardwareTestRunner:
             step["operator_confirmed"] = operator_confirmed
             if not operator_confirmed:
                 raise HardwareTestError(f"operator rejected the physical result of step {step_number}")
+
+    def _run_emergency_stop_test(self) -> None:
+        current = self.turntable.current_position()
+        if current is None or abs(current.pan) > ALLOWABLE_DISCREPANCY_DEG or abs(current.tilt) > ALLOWABLE_DISCREPANCY_DEG:
+            raise HardwareTestError("emergency-stop test must start at pan=+0°, tilt=+0°")
+
+        target = PanTilt(pan=90.0, tilt=0.0)
+        estimated_seconds = self.turntable.estimate_time(pan=target.pan, tilt=target.tilt)
+        move_timeout = self._move_timeout(estimated_seconds)
+        console.print("\nEmergency-stop check", style="bold")
+        self._attention("This test will begin a long movement and automatically issue an emergency stop after pan passes +20°.")
+        self._show_move_summary(current, target, estimated_seconds, move_timeout)
+        self._require_yes("Begin movement? [y/N] ")
+
+        result: dict[str, Any] = {
+            "target": {"pan": target.pan, "tilt": target.tilt},
+            "stop_threshold_pan": 20.0,
+            "started_at": datetime.datetime.now().astimezone().isoformat(),
+        }
+        self.report["emergency_stop"] = result
+        command_index = len(self.turntable.command_history())
+        events = self.turntable.events()
+        event_cursor = events[-1] if events else None
+        deadline = time.monotonic() + move_timeout
+
+        try:
+            self.turntable.move_to(pan=target.pan, tilt=target.tilt, move_timeout=move_timeout)
+            while True:
+                command_index, event_cursor, _ = self._drain_trace(command_index, event_cursor, target=target)
+                position = self.turntable.current_position()
+                if position is not None and position.pan > 20.0:
+                    result["stop_position"] = {"pan": position.pan, "tilt": position.tilt}
+                    result["threshold_crossed_at"] = datetime.datetime.now().astimezone().isoformat()
+                    self.turntable.abort()
+                    result["stop_sent"] = True
+                    self._drain_trace(command_index, event_cursor, target=target, force_final_position=True)
+                    break
+                error = self.turntable.last_error()
+                if error is not None:
+                    raise HardwareTestError(f"controller reported an error before the emergency stop: {error}")
+                if time.monotonic() >= deadline:
+                    raise HardwareTestError("pan did not pass +20° before the emergency-stop test timed out")
+                time.sleep(0.01)
+        except BaseException as exc:
+            result["machine_result"] = "failed"
+            result["error"] = str(exc)
+            raise
+
+        if self.turntable.current_state() is not TurntableState.STOPPED:
+            result["machine_result"] = "failed"
+            raise HardwareTestError("controller did not enter STOPPED after the emergency stop")
+        result["machine_result"] = "passed"
+        result["finished_at"] = datetime.datetime.now().astimezone().isoformat()
+        operator_confirmed = self._ask_yes_no("Did the emergency stop halt the turntable immediately and safely? [y/N] ")
+        result["operator_confirmed"] = operator_confirmed
+        if not operator_confirmed:
+            raise HardwareTestError("operator rejected the emergency-stop result")
 
     def _show_move_summary(
         self,

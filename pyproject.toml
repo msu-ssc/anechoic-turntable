@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-anechoic-turntable-hwil = "anechoic_turntable.hwil:main"
+anechoic-turntable-hwil-basic = "anechoic_turntable.hwil.basic:main"
 anechoic-turntable-tui = "anechoic_turntable.tui:main"
 
 [build-system]

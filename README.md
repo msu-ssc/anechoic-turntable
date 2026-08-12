@@ -61,7 +61,7 @@ Run the operator-guided basic functionality HWIL test only while physically
 present with the turntable:
 
 ```shell
-uv run anechoic-turntable-hwil
+uv run anechoic-turntable-hwil-basic
 ```
 
 Pass `--port /dev/...` to select a serial port instead of auto-discovery, and
@@ -84,6 +84,10 @@ Ctrl-C, a declined
 action, a controller failure, or normal completion all attempt an immediate
 stop before the connection closes. The generated JSON report records versions,
 centering attempts, results, confirmations, and the serial trace.
+
+The final check starts from home, commands pan `+90°`, and automatically sends
+the emergency stop as soon as reported pan passes `+20°`. The operator then
+confirms that the physical stop was immediate and safe.
 
 This is supervised physical-equipment testing, not part of the normal `pytest`
 suite. Follow the safety guidance in [Hardware test procedures](docs/test_procedures.md)
