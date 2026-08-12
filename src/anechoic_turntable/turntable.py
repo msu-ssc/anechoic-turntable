@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import queue
 import time
+from concurrent.futures import Future
 from typing import Literal
 from typing import overload
 
@@ -32,11 +33,12 @@ from anechoic_turntable.serial_listener import SerialListener
 
 
 class Turntable:
-    """A thread-safe, non-blocking interface to the two-axis turntable.
+    """A thread-safe interface to the two-axis turntable.
 
-    Public commands are placed on a controller queue. The controller thread
-    sends them in order while a separate listener thread continuously receives
-    position reports.
+    Commands use the non-blocking methods by default, with explicit blocking
+    variants for SET and MOV. The controller thread sends queued commands in
+    order while a separate listener thread continuously receives position
+    reports.
     """
 
     def __init__(
@@ -171,6 +173,18 @@ class Turntable:
 
         self._controller.submit_set(pan=pan, tilt=tilt, timeout=timeout)
 
+    def set_position_blocking(
+        self,
+        *,
+        pan: float,
+        tilt: float,
+        timeout: float = 5.0,
+    ) -> None:
+        """Set the declared position and wait for acknowledgement and completion."""
+
+        completion = self._controller.submit_set(pan=pan, tilt=tilt, timeout=timeout)
+        self._wait_for_completion(completion)
+
     def move_to(
         self,
         *,
@@ -181,6 +195,34 @@ class Turntable:
         """Queue a safe move, using an estimated timeout by default."""
 
         self._controller.submit_move(pan=pan, tilt=tilt, timeout=move_timeout)
+
+    def move_to_blocking(
+        self,
+        *,
+        pan: float,
+        tilt: float,
+        move_timeout: float | None = None,
+    ) -> None:
+        """Queue a safe move and wait for acknowledgement and completion."""
+
+        completion = self._controller.submit_move(pan=pan, tilt=tilt, timeout=move_timeout)
+        self._wait_for_completion(completion)
+
+    def _wait_for_completion(self, completion: Future[None]) -> None:
+        try:
+            self._controller.wait_for_completion(completion)
+        except KeyboardInterrupt:
+            self._attempt_abort_after_blocking_failure()
+            raise
+        except Exception:
+            self._attempt_abort_after_blocking_failure()
+            raise
+
+    def _attempt_abort_after_blocking_failure(self) -> None:
+        try:
+            self.abort()
+        except Exception:
+            self.logger.exception("Unable to attempt an emergency stop after a blocking command failed")
 
     def estimate_time(self, *, pan: float, tilt: float) -> float:
         """Estimate seconds to move from the current position to a target."""

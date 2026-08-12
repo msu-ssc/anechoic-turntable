@@ -11,6 +11,7 @@ import queue
 import threading
 import time
 from collections import deque
+from concurrent.futures import Future
 from typing import Literal
 from typing import overload
 
@@ -117,6 +118,7 @@ class _SetCommand:
     pan: float
     tilt: float
     timeout: float
+    completion: _CommandCompletion
 
 
 @dataclasses.dataclass(frozen=True)
@@ -125,6 +127,7 @@ class _MoveCommand:
     pan: float
     tilt: float
     timeout: float | None
+    completion: _CommandCompletion
 
 
 @dataclasses.dataclass(frozen=True)
@@ -167,6 +170,7 @@ class _SetOperation:
     tilt: float
     deadline: float
     timeout_at: datetime.datetime
+    completion: _CommandCompletion
 
 
 @dataclasses.dataclass
@@ -177,6 +181,7 @@ class _MoveOperation:
     timeout_at: datetime.datetime
     internal_target: PanTilt
     phase: Literal["direct", "counter"]
+    completion: _CommandCompletion | None = None
 
 
 _Operation = _SetOperation | _MoveOperation
@@ -190,6 +195,16 @@ class _PendingAcknowledgement:
     deadline: float
     stop_on_failure: bool
     invalidates_position_on_uncertainty: bool
+    completion: _CommandCompletion | None = None
+
+
+@dataclasses.dataclass
+class _CommandCompletion:
+    """Track acknowledgement and physical completion for one command."""
+
+    future: Future[None] = dataclasses.field(default_factory=Future)
+    acknowledged: bool = False
+    position_reached: bool = False
 
 
 class ControllerThread(threading.Thread):
@@ -236,6 +251,7 @@ class ControllerThread(threading.Thread):
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
         self._command_generation = 0
+        self._unresolved_completions: set[Future[None]] = set()
 
         self._state = TurntableState.NOT_SET
         self._has_been_set = False
@@ -252,11 +268,12 @@ class ControllerThread(threading.Thread):
         self._most_recent_by_kind: dict[str, ReceivedMessage] = {}
         self._last_error: Exception | None = None
 
-    def submit_set(self, *, pan: float, tilt: float, timeout: float) -> None:
+    def submit_set(self, *, pan: float, tilt: float, timeout: float) -> Future[None]:
         _validate_set_position(pan=pan, tilt=tilt)
         _validate_timeout(timeout)
         with self._lock:
             self._ensure_open()
+            completion = self._new_completion()
             # A SET changes the coordinate frame, so samples captured before it
             # must never be plotted alongside samples captured after it.
             self._position_history.clear()
@@ -268,8 +285,10 @@ class ControllerThread(threading.Thread):
                     pan=pan,
                     tilt=tilt,
                     timeout=timeout,
+                    completion=completion,
                 )
             )
+            return completion.future
 
     def confirm_position(self) -> None:
         """Trust the firmware's current coordinates without sending a SET."""
@@ -291,7 +310,7 @@ class ControllerThread(threading.Thread):
             )
             self._state = TurntableState.STOPPED
 
-    def submit_move(self, *, pan: float, tilt: float, timeout: float | None) -> None:
+    def submit_move(self, *, pan: float, tilt: float, timeout: float | None) -> Future[None]:
         _validate_position(pan=pan, tilt=tilt)
         if timeout is not None:
             _validate_timeout(timeout)
@@ -299,14 +318,22 @@ class ControllerThread(threading.Thread):
             self._ensure_open()
             if not (self._has_been_set or self._set_requested):
                 raise TurntableError("The turntable position must be set before it can move")
+            completion = self._new_completion()
             self._command_queue.put(
                 _MoveCommand(
                     generation=self._command_generation,
                     pan=pan,
                     tilt=tilt,
                     timeout=timeout,
+                    completion=completion,
                 )
             )
+            return completion.future
+
+    def wait_for_completion(self, completion: Future[None]) -> None:
+        """Wait until one submitted command completes or fails."""
+
+        completion.result()
 
     def estimate_time(self, *, pan: float, tilt: float) -> float:
         """Estimate travel time to a physical target, without timeout margin."""
@@ -386,7 +413,7 @@ class ControllerThread(threading.Thread):
         with self._lock:
             self._ensure_open()
             self._operation = None
-            self._invalidate_pending_commands()
+            self._invalidate_pending_commands(TurntableError("Turntable command was aborted"))
             self._set_requested = False
             if self._state != TurntableState.NO_COMMUNICATION:
                 self._state = TurntableState.STOPPED if self._has_been_set else TurntableState.NOT_SET
@@ -534,12 +561,13 @@ class ControllerThread(threading.Thread):
                 with self._lock:
                     self._last_error = exc
                     self._operation = None
-                    self._invalidate_pending_commands()
+                    self._invalidate_pending_commands(exc)
                     self._set_requested = False
                     self._state = TurntableState.ERROR
             self._stop_event.wait(self._poll_interval)
 
         with self._lock:
+            self._invalidate_pending_commands(TurntableError("Turntable controller closed before command completion"))
             self._state = TurntableState.CLOSED
 
     def _drain_commands(self) -> None:
@@ -589,6 +617,8 @@ class ControllerThread(threading.Thread):
                     internal_position,
                     PanTilt(operation.pan, operation.tilt),
                 ):
+                    operation.completion.position_reached = True
+                    self._complete_if_finished(operation.completion)
                     self._has_been_set = True
                     self._set_requested = any(isinstance(command, _SetCommand) for command in self._queued_commands)
                     self._operation = None
@@ -602,6 +632,9 @@ class ControllerThread(threading.Thread):
                     internal_position,
                     operation.internal_target,
                 ):
+                    if operation.completion is not None:
+                        operation.completion.position_reached = True
+                        self._complete_if_finished(operation.completion)
                     self._operation = None
                     if self._has_pending_commands():
                         self._state = TurntableState.MOVING
@@ -637,13 +670,16 @@ class ControllerThread(threading.Thread):
                     pending=pending,
                     uncertain=False,
                 )
+            elif pending.completion is not None:
+                pending.completion.acknowledged = True
+                self._complete_if_finished(pending.completion)
 
     def _handle_firmware_error(self, event: ReceivedMessageError) -> None:
         with self._lock:
             self._write_stop()
             self._last_error = TurntableError(f"Firmware reported {event.reason}")
             self._operation = None
-            self._invalidate_pending_commands()
+            self._invalidate_pending_commands(self._last_error)
             self._set_requested = False
             self._has_been_set = False
             self._internal_position = None
@@ -668,14 +704,14 @@ class ControllerThread(threading.Thread):
                     self._has_been_set = False
                     self._set_requested = False
                     self._operation = None
-                    self._invalidate_pending_commands()
+                    self._invalidate_pending_commands(TurntableError("Communication with the turntable was lost"))
                 return
 
             if operation is not None and now > operation.deadline:
                 self._write_stop()
                 self._last_error = TimeoutError("Turntable command timed out")
                 self._operation = None
-                self._invalidate_pending_commands()
+                self._invalidate_pending_commands(self._last_error)
                 self._set_requested = False
                 self._state = TurntableState.TIMED_OUT
                 self._pending_acknowledgement = None
@@ -772,12 +808,14 @@ class ControllerThread(threading.Thread):
                 tilt=command.tilt,
                 deadline=deadline,
                 timeout_at=timeout_at,
+                completion=command.completion,
             )
             self._state = TurntableState.NOT_SET
             self._write_acknowledged_command(
                 _format_set_command(pan=command.pan, tilt=command.tilt),
                 command="SET",
                 invalidates_position_on_uncertainty=True,
+                completion=command.completion,
             )
 
     def _begin_move(self, command: _MoveCommand) -> None:
@@ -785,13 +823,17 @@ class ControllerThread(threading.Thread):
             if command.generation != self._command_generation:
                 return
             if not self._has_been_set:
-                self._last_error = TurntableError("The turntable position is not set")
+                error = TurntableError("The turntable position is not set")
+                self._last_error = error
                 self._state = TurntableState.ERROR
                 self._set_requested = False
+                self._fail_completion(command.completion, error)
                 return
             if self._corrected_position is None:
-                self._last_error = TurntableError("The current position is unavailable")
+                error = TurntableError("The current position is unavailable")
+                self._last_error = error
                 self._state = TurntableState.ERROR
+                self._fail_completion(command.completion, error)
                 return
             timeout = command.timeout
             if timeout is None:
@@ -808,6 +850,7 @@ class ControllerThread(threading.Thread):
                 timeout_at=timeout_at,
                 internal_target=PanTilt(pan=command.pan, tilt=command.tilt),
                 phase="direct",
+                completion=command.completion,
             )
             self._operation = operation
             self._state = TurntableState.MOVING
@@ -815,6 +858,7 @@ class ControllerThread(threading.Thread):
                 _format_move_command(pan=command.pan, tilt=command.tilt),
                 command="MOV",
                 stop_on_failure=True,
+                completion=command.completion,
             )
 
     def _begin_counter_move(self, command: _CounterMoveCommand) -> None:
@@ -845,6 +889,7 @@ class ControllerThread(threading.Thread):
         command: str,
         stop_on_failure: bool = False,
         invalidates_position_on_uncertainty: bool = False,
+        completion: _CommandCompletion | None = None,
     ) -> None:
         if self._pending_acknowledgement is not None:
             raise RuntimeError("Cannot write a second command while an acknowledgement is pending")
@@ -855,6 +900,7 @@ class ControllerThread(threading.Thread):
             deadline=time.monotonic() + self._acknowledgement_timeout,
             stop_on_failure=stop_on_failure,
             invalidates_position_on_uncertainty=invalidates_position_on_uncertainty,
+            completion=completion,
         )
         self._pending_acknowledgement = pending
         self._write_command(frame)
@@ -874,7 +920,7 @@ class ControllerThread(threading.Thread):
         self._last_error = error
         self._operation = None
         self._set_requested = False
-        self._invalidate_pending_commands()
+        self._invalidate_pending_commands(error)
         self._state = TurntableState.ERROR
 
     def _write_command(self, command: bytes) -> None:
@@ -895,7 +941,7 @@ class ControllerThread(threading.Thread):
                 self._last_error = exc
                 self._operation = None
                 self._pending_acknowledgement = None
-                self._invalidate_pending_commands()
+                self._invalidate_pending_commands(exc)
                 self._set_requested = False
                 self._state = TurntableState.ERROR
 
@@ -903,7 +949,28 @@ class ControllerThread(threading.Thread):
         for _ in range(repeat_count):
             self._write_command(b"%")
 
-    def _invalidate_pending_commands(self) -> None:
+    def _new_completion(self) -> _CommandCompletion:
+        completion = _CommandCompletion()
+        self._unresolved_completions.add(completion.future)
+        return completion
+
+    def _complete_if_finished(self, completion: _CommandCompletion) -> None:
+        if not completion.acknowledged or not completion.position_reached:
+            return
+        if not completion.future.done():
+            completion.future.set_result(None)
+        self._unresolved_completions.discard(completion.future)
+
+    def _fail_completion(self, completion: _CommandCompletion, error: Exception) -> None:
+        if not completion.future.done():
+            completion.future.set_exception(error)
+        self._unresolved_completions.discard(completion.future)
+
+    def _invalidate_pending_commands(self, error: Exception) -> None:
+        for completion in self._unresolved_completions:
+            if not completion.done():
+                completion.set_exception(error)
+        self._unresolved_completions.clear()
         self._pending_acknowledgement = None
         self._command_generation += 1
         self._queued_commands.clear()

@@ -112,6 +112,20 @@ def make_turntable(fake, **kwargs):
     )
 
 
+def run_in_thread(function):
+    outcome = {}
+
+    def target():
+        try:
+            outcome["result"] = function()
+        except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001 - thread test harness
+            outcome["exception"] = exc
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    return thread, outcome
+
+
 @pytest.mark.parametrize("acknowledgement_timeout", [0, -1, float("inf"), float("nan")])
 def test_acknowledgement_timeout_must_be_finite_and_positive(acknowledgement_timeout):
     with pytest.raises(ValueError, match="acknowledgement_timeout"):
@@ -324,6 +338,156 @@ def test_set_and_move_are_queued_with_direct_coordinates():
         assert all(sample.internal_position != turntable2.PanTilt(pan=4, tilt=2) for sample in turntable.position_history())
     finally:
         turntable.close()
+
+
+def test_blocking_set_and_move_require_acknowledgement_and_position_completion():
+    fake = FakeSerial(
+        acknowledge_commands=False,
+        respond_to_moves=False,
+        respond_to_sets=False,
+    )
+    turntable = make_turntable(fake, acknowledgement_timeout=0.5)
+    try:
+        set_thread, set_outcome = run_in_thread(lambda: turntable.set_position_blocking(pan=0, tilt=0))
+        wait_for(lambda: b"CMD:SET:0.000,0.000;" in fake.writes)
+
+        fake.emit_internal_position(pan=0, tilt=0)
+        time.sleep(0.02)
+        assert set_thread.is_alive()
+
+        fake.emit(b"MSG:ACK:SET;\r\n")
+        set_thread.join(timeout=1)
+        assert not set_thread.is_alive()
+        assert set_outcome == {"result": None}
+
+        move_thread, move_outcome = run_in_thread(lambda: turntable.move_to_blocking(pan=10, tilt=-5))
+        wait_for(lambda: b"CMD:MOV:10.000,-5.000;" in fake.writes)
+
+        fake.emit(b"MSG:ACK:MOV;\r\n")
+        time.sleep(0.02)
+        assert move_thread.is_alive()
+
+        fake.emit_internal_position(pan=10, tilt=-5)
+        move_thread.join(timeout=1)
+        assert not move_thread.is_alive()
+        assert move_outcome == {"result": None}
+    finally:
+        turntable.close()
+
+
+def test_blocking_move_waits_for_its_own_queued_command():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(pan=0, tilt=0)
+        turntable.set_position_blocking(pan=0, tilt=0)
+        turntable.move_to(pan=10, tilt=0)
+
+        move_thread, outcome = run_in_thread(lambda: turntable.move_to_blocking(pan=20, tilt=0))
+        wait_for(lambda: b"CMD:MOV:10.000,0.000;" in fake.writes)
+        fake.emit_internal_position(pan=10, tilt=0)
+        wait_for(lambda: b"CMD:MOV:20.000,0.000;" in fake.writes)
+
+        assert move_thread.is_alive()
+        fake.emit_internal_position(pan=20, tilt=0)
+        move_thread.join(timeout=1)
+
+        assert not move_thread.is_alive()
+        assert outcome == {"result": None}
+    finally:
+        turntable.close()
+
+
+def test_blocking_move_preserves_command_error_and_attempts_abort():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(pan=0, tilt=0)
+        turntable.set_position_blocking(pan=0, tilt=0)
+        fake.acknowledge_commands = False
+
+        move_thread, outcome = run_in_thread(lambda: turntable.move_to_blocking(pan=10, tilt=0))
+        wait_for(lambda: b"CMD:MOV:10.000,0.000;" in fake.writes)
+        fake.emit(b"MSG:NAK:MOV,OUT_OF_BOUNDS;\r\n")
+        move_thread.join(timeout=1)
+
+        assert not move_thread.is_alive()
+        assert isinstance(outcome["exception"], turntable2.TurntableError)
+        assert "Firmware rejected MOV: OUT_OF_BOUNDS" in str(outcome["exception"])
+        assert fake.writes.count(b"%") >= 5
+    finally:
+        turntable.close()
+
+
+def test_blocking_move_preserves_controller_timeout():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake, communication_timeout=1.0)
+    try:
+        fake.emit_internal_position(pan=0, tilt=0)
+        turntable.set_position_blocking(pan=0, tilt=0)
+
+        with pytest.raises(TimeoutError, match="Turntable command timed out"):
+            turntable.move_to_blocking(pan=10, tilt=0, move_timeout=0.03)
+
+        assert fake.writes.count(b"%") >= 5
+    finally:
+        turntable.close()
+
+
+def test_blocking_move_preserves_keyboard_interrupt_and_attempts_abort(monkeypatch):
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(pan=0, tilt=0)
+        turntable.set_position_blocking(pan=0, tilt=0)
+
+        def interrupt_wait(_completion):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(turntable._controller, "wait_for_completion", interrupt_wait)
+
+        with pytest.raises(KeyboardInterrupt):
+            turntable.move_to_blocking(pan=10, tilt=0)
+
+        assert fake.writes.count(b"%") == 5
+    finally:
+        turntable.close()
+
+
+def test_abort_wakes_blocking_move_with_command_error():
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    try:
+        fake.emit_internal_position(pan=0, tilt=0)
+        turntable.set_position_blocking(pan=0, tilt=0)
+        move_thread, outcome = run_in_thread(lambda: turntable.move_to_blocking(pan=10, tilt=0))
+        wait_for(lambda: b"CMD:MOV:10.000,0.000;" in fake.writes)
+
+        turntable.abort()
+        move_thread.join(timeout=1)
+
+        assert not move_thread.is_alive()
+        assert isinstance(outcome["exception"], turntable2.TurntableError)
+        assert "was aborted" in str(outcome["exception"])
+    finally:
+        turntable.close()
+
+
+def test_close_wakes_blocking_move_and_reports_failed_abort_attempt(caplog):
+    fake = FakeSerial(respond_to_moves=False)
+    turntable = make_turntable(fake)
+    fake.emit_internal_position(pan=0, tilt=0)
+    turntable.set_position_blocking(pan=0, tilt=0)
+    move_thread, outcome = run_in_thread(lambda: turntable.move_to_blocking(pan=10, tilt=0))
+    wait_for(lambda: b"CMD:MOV:10.000,0.000;" in fake.writes)
+
+    turntable.close()
+    move_thread.join(timeout=1)
+
+    assert not move_thread.is_alive()
+    assert isinstance(outcome["exception"], turntable2.TurntableError)
+    assert "closed before command completion" in str(outcome["exception"])
+    assert "Unable to attempt an emergency stop" in caplog.text
 
 
 def test_next_command_waits_for_matching_acknowledgement_after_completion():
