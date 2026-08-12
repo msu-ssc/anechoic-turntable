@@ -1,3 +1,56 @@
+## Basic functionality HWIL test
+
+The preferred basic compatibility check is the supervised HWIL runner:
+
+```shell
+uv run anechoic-turntable-hwil-basic
+```
+
+Use `--port /dev/...` to bypass serial-port discovery or `--report PATH` to
+select the JSON result path. This command operates physical motors. Run it only
+while present at the table, with its entire travel area clear and the emergency
+power disconnect immediately accessible. A second person ready to disconnect
+power is strongly recommended.
+
+The runner checks communication and firmware-version reporting before allowing
+motion. It then repeats this centering procedure until the operator confirms
+physical zero:
+
+1. Review the current reported position and confirm it if it is physically
+   correct. Confirmation uses the controller's no-command `confirm_position()`
+   operation and skips SET, but still performs the go-home movement.
+2. Otherwise, enter the best available estimate of the current physical pan
+   and tilt.
+3. Review the signs, target, estimated travel duration, and hard timeout.
+4. Explicitly approve SET of that estimate and the move to pan `+0`, tilt `+0`.
+5. Confirm whether the resulting physical position is actually centered.
+6. If it is not centered, enter the remaining observed offset and repeat.
+
+The estimate is safety-critical: it determines the direction and distance of
+the following move. Do not guess when the physical orientation, coordinate
+signs, or clear travel path are uncertain.
+
+Once centered, the runner moves to pan `+5`, tilt `+0`; returns home; moves to pan
+`+0`, tilt `+5`; and returns home again. It asks for approval before every move
+and physical confirmation afterward. Any negative result ends the test. Ctrl-C
+at any point requests an immediate stop. The runner also attempts a final stop
+on success, cancellation, or failure and writes a JSON report containing the
+observed trace and results.
+
+Positions and movement amounts displayed for operator confirmation are rounded
+to the nearest degree. Exact command bytes remain visible in the subdued serial
+trace, whose position lines update at about 3 Hz with three decimal places.
+Movement position lines show both the current coordinates and the remaining
+signed pan/tilt delta to the target. All operator-facing angles include an
+explicit `+` or `-` sign.
+
+The first emergency-stop check starts at pan `+0°`, tilt `+0°`, commands a move to pan `+30°`,
+and sends the emergency stop as soon as reported pan passes `+5°`. The live
+remaining value is measured to that abort threshold. The operator must confirm
+that the physical stop was immediate and safe, then approve and confirm a
+return home. The second check commands tilt `-30°`, sends the emergency stop
+after reported tilt passes `-5°`, and again requires physical confirmation and
+a confirmed return home.
 
 ## Quick Test Procedure
 Run through these commands before actually testing changes you made:

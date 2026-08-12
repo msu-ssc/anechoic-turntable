@@ -55,6 +55,50 @@ until the position is set or confirmed again. Serial-port discovery runs in the
 background so the display remains responsive. Closing the TUI attempts a safe
 stop before closing the serial connection.
 
+## Basic functionality HWIL test
+
+Run the operator-guided basic functionality HWIL test only while physically
+present with the turntable:
+
+```shell
+uv run anechoic-turntable-hwil-basic
+```
+
+Pass `--port /dev/...` to select a serial port instead of auto-discovery, and
+`--report PATH` to choose the JSON result path. The test first checks position
+telemetry and the running firmware version. It then guides the operator through
+an interactive centering loop. The operator may confirm an already-correct
+reported position without sending SET; the runner still performs the approved
+go-home movement. Otherwise, each approved attempt declares the
+operator's estimated physical pan/tilt with SET and moves to `(+0, +0)`. The loop
+continues until the operator confirms physical center.
+
+After centering, the test exercises small pan and tilt movements, returning to
+home after each axis. Every move displays its target, estimated duration, hard
+timeout, command writes, acknowledgements, and position reports. The operator
+must approve each move and confirm its rounded physical result. Directions,
+targets, and confirmation prompts are rounded to the nearest degree; the
+subdued live position trace updates at about 3 Hz with three decimal places.
+Each movement trace line shows the current position and the remaining signed
+pan/tilt delta to the target. All operator-facing angles include an explicit
+`+` or `-` sign.
+Ctrl-C, a declined
+action, a controller failure, or normal completion all attempt an immediate
+stop before the connection closes. The generated JSON report records versions,
+centering attempts, results, confirmations, and the serial trace.
+
+The final checks start from home. The first commands pan `+30°` and automatically sends
+the emergency stop as soon as reported pan passes `+5°`. Its live trace shows
+pan remaining until the abort threshold rather than pan remaining to the
+commanded target. After the operator confirms that the stop was immediate and
+safe, an operator-approved movement returns the table home. The second check
+commands tilt `-30°`, stops after reported tilt passes `-5°`, receives the same
+operator confirmation, and returns home again.
+
+This is supervised physical-equipment testing, not part of the normal `pytest`
+suite. Follow the safety guidance in [Hardware test procedures](docs/test_procedures.md)
+before running it.
+
 ## Development
 
 Create the development environment and run the checks with:

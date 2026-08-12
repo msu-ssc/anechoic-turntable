@@ -17,6 +17,7 @@ dependencies = [
 dev = [
     { name = "pre-commit" },
     { name = "pytest" },
+    { name = "rich" },
     { name = "ruff" },
 ]
 
@@ -33,6 +34,7 @@ requires-dist = [
 dev = [
     { name = "pre-commit", specifier = ">=4.6.1" },
     { name = "pytest", specifier = ">=8.3.4" },
+    { name = "rich", specifier = ">=15.0.0" },
     { name = "ruff" },
 ]
 
