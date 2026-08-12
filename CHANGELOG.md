@@ -97,3 +97,7 @@ Release 1.0.0. First stable release. All versioning after this will adhere to [s
 Specific change in this release:
 - Implement protocol version 4.0.0, namely changing the emergency stop character from 'p' to '%'.
 - No end user-facing changes.
+
+## 1.1.0 — 2026-08-12
+
+Add an `anechoic_turntable.estimate_movement_time()` function.
