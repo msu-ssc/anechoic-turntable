@@ -1,7 +1,8 @@
 # Threaded Turntable Controller
 
-`anechoic_turntable` is the non-blocking turntable interface. It uses one
-thread to frame incoming serial messages and a second thread to maintain
+`anechoic_turntable` is a threaded turntable interface with non-blocking
+commands by default and explicit blocking variants for SET and MOV. It uses
+one thread to frame incoming serial messages and a second thread to maintain
 controller state and send commands.
 
 By default, each valid position report also queues a compact JSON message for a
@@ -99,10 +100,18 @@ completion. Counter targets bypass the physical bounds enforced by `move_to`,
 so diagnostic operators must ensure targets are reachable and mechanically
 safe.
 
-`set_position` and `move_to` queue work and return immediately. Commands are
-processed in order. `move_to` sends physical pan and tilt directly as firmware
-pan and tilt. By default, its timeout is calculated when the queued move
-starts, so earlier queued moves are reflected in the starting position.
+`set_position` and `move_to` queue work and return immediately. Their
+`set_position_blocking` and `move_to_blocking` counterparts submit the same
+work but wait for that specific command to receive its firmware acknowledgement
+and reach its requested position. Commands are processed in order, so a
+blocking call also waits for commands queued ahead of it. If waiting is
+interrupted or the command fails, the blocking call attempts an emergency stop
+and re-raises the original exception; `KeyboardInterrupt` remains a
+`KeyboardInterrupt`.
+
+`move_to` sends physical pan and tilt directly as firmware pan and tilt. By
+default, its timeout is calculated when the queued move starts, so earlier
+queued moves are reflected in the starting position.
 Every protocol command is written once, then the controller waits up to 0.25
 seconds for its matching ACK or NAK. A missing acknowledgement is retried up to
 three total attempts by default. A NAK, or exhaustion of those attempts, clears
