@@ -316,7 +316,7 @@ class ControllerThread(threading.Thread):
             self._ensure_open()
             if self._corrected_position is None:
                 raise TurntableError("A current position report is required to estimate movement time")
-            return _estimate_movement_time(
+            return estimate_movement_time(
                 current=self._corrected_position,
                 target=PanTilt(pan=pan, tilt=tilt),
             )
@@ -795,7 +795,7 @@ class ControllerThread(threading.Thread):
                 return
             timeout = command.timeout
             if timeout is None:
-                estimated_time = _estimate_movement_time(
+                estimated_time = estimate_movement_time(
                     current=self._corrected_position,
                     target=PanTilt(pan=command.pan, tilt=command.tilt),
                 )
@@ -963,11 +963,53 @@ def _validate_set_position(*, pan: float, tilt: float) -> None:
         raise ValueError(f"tilt must be within {SET_TILT_BOUNDS}")
 
 
-def _estimate_movement_time(*, current: PanTilt, target: PanTilt) -> float:
-    """Estimate concurrent two-axis travel time from empirical measurements."""
+@overload
+def estimate_movement_time(*, current: PanTilt, target: PanTilt) -> float: ...
 
-    pan_time = _estimate_axis_time(abs(target.pan - current.pan), axis="pan")
-    tilt_time = _estimate_axis_time(abs(target.tilt - current.tilt), axis="tilt")
+
+@overload
+def estimate_movement_time(
+    *,
+    current_pan: float,
+    current_tilt: float,
+    target_pan: float,
+    target_tilt: float,
+) -> float: ...
+
+
+def estimate_movement_time(
+    *,
+    current: PanTilt | None = None,
+    target: PanTilt | None = None,
+    current_pan: float | None = None,
+    current_tilt: float | None = None,
+    target_pan: float | None = None,
+    target_tilt: float | None = None,
+) -> float:
+    """Estimate concurrent two-axis travel time between physical positions.
+
+    The coefficients in this acceleration-aware model were derived from the
+    hardware measurements documented in
+    https://github.com/msu-ssc/lems-anechoic/issues/35.
+    See [Travel-time estimates](docs/travel-time-estimates.md) for the model
+    and its limitations.
+
+    Provide either ``current`` and ``target`` as :class:`PanTilt` values, or
+    provide all four scalar coordinate arguments. This calculation does not
+    command movement and does not include the controller's timeout margin.
+    """
+
+    if current is not None and target is not None and current_pan is None and current_tilt is None and target_pan is None and target_tilt is None:
+        current_position = current
+        target_position = target
+    elif current is None and target is None and current_pan is not None and current_tilt is not None and target_pan is not None and target_tilt is not None:
+        current_position = PanTilt(pan=current_pan, tilt=current_tilt)
+        target_position = PanTilt(pan=target_pan, tilt=target_tilt)
+    else:
+        raise TypeError("Provide either current and target, or current_pan, current_tilt, target_pan, and target_tilt")
+
+    pan_time = _estimate_axis_time(abs(target_position.pan - current_position.pan), axis="pan")
+    tilt_time = _estimate_axis_time(abs(target_position.tilt - current_position.tilt), axis="tilt")
     return max(pan_time, tilt_time)
 
 

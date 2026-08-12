@@ -21,6 +21,7 @@ from anechoic_turntable.controller import TurntableActivity
 from anechoic_turntable.controller import TurntableCompleteState
 from anechoic_turntable.controller import TurntableError
 from anechoic_turntable.controller import TurntableState
+from anechoic_turntable.controller import estimate_movement_time
 from anechoic_turntable.messages import ReceivedMessage
 from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessageCounter
@@ -55,6 +56,7 @@ __all__ = [
     "TurntableError",
     "TurntableState",
     "__version__",
+    "estimate_movement_time",
     "find",
     "parse_received_message",
 ]

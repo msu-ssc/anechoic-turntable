@@ -390,6 +390,44 @@ def test_estimate_time_requires_a_current_position():
         turntable.close()
 
 
+def test_estimate_movement_time_accepts_positions_without_a_position_report():
+    estimate = turntable2.estimate_movement_time(
+        current=turntable2.PanTilt(pan=0, tilt=0),
+        target=turntable2.PanTilt(pan=10, tilt=5),
+    )
+
+    assert estimate == pytest.approx(6.6031)
+
+
+def test_estimate_movement_time_accepts_scalar_coordinates():
+    estimate = turntable2.estimate_movement_time(
+        current_pan=0,
+        current_tilt=0,
+        target_pan=10,
+        target_tilt=5,
+    )
+
+    assert estimate == pytest.approx(6.6031)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {},
+        {"current": turntable2.PanTilt(0, 0)},
+        {
+            "current": turntable2.PanTilt(0, 0),
+            "target": turntable2.PanTilt(1, 1),
+            "current_pan": 0,
+        },
+        {"current_pan": 0, "current_tilt": 0, "target_pan": 1},
+    ],
+)
+def test_estimate_movement_time_rejects_incomplete_or_mixed_arguments(arguments):
+    with pytest.raises(TypeError, match="Provide either current and target"):
+        turntable2.estimate_movement_time(**arguments)
+
+
 def test_axis_time_estimate_rejects_an_invalid_axis():
     with pytest.raises(ValueError, match="Invalid axis: 'roll'"):
         _estimate_axis_time(10, axis="roll")  # type: ignore[arg-type]
