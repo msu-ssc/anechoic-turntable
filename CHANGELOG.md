@@ -101,3 +101,7 @@ Specific change in this release:
 ## 1.1.0 — 2026-08-12
 
 Add an `anechoic_turntable.estimate_movement_time()` function.
+
+## 1.2.0 — 2026-08-12
+
+Implement blocking options on the controller for moving and setting. This allows an end user to use the turntable without caring about threading at all, for the most part.
