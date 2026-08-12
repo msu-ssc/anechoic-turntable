@@ -132,7 +132,7 @@ does not validate framing, commands, or coordinate bounds. Because arbitrary
 bytes can move the table or change the firmware coordinate frame without a
 tracked controller operation, sending raw bytes clears the controller's trusted
 physical-coordinate state. A subsequent normal move requires `set_position()`
-or `confirm_position()` first. Use `abort()` rather than a raw `p` when an
+or `confirm_position()` first. Use `abort()` rather than a raw `%` when an
 immediate stop is required: abort bypasses queued work, while raw writes do not.
 
 `estimate_time(pan=..., tilt=...)` returns the estimated travel time in seconds
