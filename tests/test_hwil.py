@@ -8,6 +8,7 @@ from anechoic_turntable.controller import TurntableState
 from anechoic_turntable.hwil import HardwareTestError
 from anechoic_turntable.hwil import HardwareTestRunner
 from anechoic_turntable.hwil import OperatorCancelled
+from anechoic_turntable.hwil import main
 from anechoic_turntable.messages import ReceivedMessageAcknowledgement
 from anechoic_turntable.messages import ReceivedMessagePosition
 from anechoic_turntable.messages import ReceivedMessageVersion
@@ -173,8 +174,8 @@ def test_hwil_runner_repeats_centering_then_runs_basic_movement_sequence(monkeyp
     rendered = capsys.readouterr().out
     assert "Interactive centering" in rendered
     assert "b'CMD:MOV:5.000,0.000;'" in rendered
-    assert "The turntable will move LEFT 5°." in rendered
-    assert "Did the motion complete, and is the current position pan=5°, tilt=0°? [y/N]" in rendered
+    assert "The turntable will move RIGHT 5°." in rendered
+    assert "Did the motion complete, and is the current position pan=+5°, tilt=+0°? [y/N]" in rendered
     assert "PASS: Basic functionality HWIL test completed." in rendered
 
 
@@ -259,11 +260,25 @@ def test_final_stop_failure_prevents_a_passing_result(monkeypatch):
 
 
 def test_operator_movement_text_uses_directions_and_rounded_degrees():
-    current = PanTilt(pan=-20.4, tilt=15.4)
+    current = PanTilt(pan=-10.0, tilt=15.4)
     target = PanTilt(pan=-15.2, tilt=5.2)
 
     assert HardwareTestRunner._movement_description(current, target) == "The turntable will move LEFT 5° and DOWN 10°."
-    assert HardwareTestRunner._confirmation_prompt(target) == "Did the motion complete, and is the current position pan=-15°, tilt=5°? [y/N] "
+    assert HardwareTestRunner._confirmation_prompt(target) == "Did the motion complete, and is the current position pan=-15°, tilt=+5°? [y/N] "
+    assert HardwareTestRunner._movement_description(PanTilt(pan=0.0, tilt=0.0), PanTilt(pan=5.0, tilt=5.0)) == "The turntable will move RIGHT 5° and UP 5°."
+    assert HardwareTestRunner._format_position(PanTilt(pan=0.0, tilt=123.4)) == "pan=+0°, tilt=+123°"
+    assert HardwareTestRunner._format_precise_position(PanTilt(pan=-0.0, tilt=0.123)) == "pan=+0.000°, tilt=+0.123°"
+
+
+def test_cli_prints_title_and_connection_status_before_discovery(monkeypatch, capsys):
+    def fail_discovery(**_kwargs):
+        output = capsys.readouterr().out
+        assert output.index("Basic functionality HWIL test") < output.index("Trying to connect...")
+        raise OSError("not connected")
+
+    monkeypatch.setattr("anechoic_turntable.hwil.Turntable.find", fail_discovery)
+
+    assert main([]) == 1
 
 
 def test_trace_continues_after_event_history_reaches_capacity(monkeypatch):
@@ -307,13 +322,13 @@ def test_position_trace_is_limited_to_about_three_hz_with_three_decimal_places()
         )
     runner = HardwareTestRunner(table)
 
-    runner._drain_trace(0, None)
+    runner._drain_trace(0, None, target=PanTilt(pan=5.0, tilt=0.0))
 
     position_lines = [line for line in runner.report["trace"] if " POS " in line]
     assert len(position_lines) == 3
-    assert "pan=1.234°, tilt=-0.125°" in position_lines[0]
-    assert "pan=2.345°, tilt=-0.125°" in position_lines[1]
-    assert "pan=3.456°, tilt=-0.125°" in position_lines[2]
+    assert "CURRENT: pan=+1.234°, tilt=-0.125° REMAINING: pan=+3.766°, tilt=+0.125°" in position_lines[0]
+    assert "CURRENT: pan=+2.345°, tilt=-0.125° REMAINING: pan=+2.655°, tilt=+0.125°" in position_lines[1]
+    assert "CURRENT: pan=+3.456°, tilt=-0.125° REMAINING: pan=+1.544°, tilt=+0.125°" in position_lines[2]
 
 
 @pytest.mark.parametrize(

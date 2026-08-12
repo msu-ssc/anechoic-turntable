@@ -93,7 +93,6 @@ class HardwareTestRunner:
         return self.report
 
     def _show_banner(self) -> None:
-        console.print("\nBasic functionality HWIL test", style="bold")
         console.print(f"Port: {self.turntable.port or 'auto-discovered'}")
         console.print(f"Controller: {CONTROLLER_VERSION}")
         console.print(f"Protocol snapshot: {PROTOCOL_VERSION}")
@@ -153,7 +152,7 @@ class HardwareTestRunner:
 
     def _center_interactively(self) -> None:
         console.print("\nInteractive centering", style="bold")
-        self._attention("Each attempt declares your estimated current position with SET, then moves to pan=0°, tilt=0°.")
+        self._attention("Each attempt declares your estimated current position with SET, then moves to pan=+0°, tilt=+0°.")
         self._attention("Your estimate directly determines the direction and distance of travel. Check signs and values carefully.")
         console.print("Displayed positions and movement amounts are rounded to the nearest degree.")
 
@@ -186,6 +185,7 @@ class HardwareTestRunner:
             try:
                 self._run_traced_operation(
                     lambda pan=pan, tilt=tilt: self.turntable.set_position_blocking(pan=pan, tilt=tilt),
+                    target=PanTilt(pan=pan, tilt=tilt),
                 )
                 self._run_traced_operation(
                     lambda move_timeout=move_timeout: self.turntable.move_to_blocking(
@@ -193,6 +193,7 @@ class HardwareTestRunner:
                         tilt=0.0,
                         move_timeout=move_timeout,
                     ),
+                    target=target,
                 )
                 final_position = self.turntable.current_position()
                 if self.turntable.current_state() is not TurntableState.STOPPED:
@@ -230,7 +231,7 @@ class HardwareTestRunner:
             move_timeout = self._move_timeout(expected_seconds)
             console.print(f"\nStep {step_number}/{len(targets)}", style="bold")
             self._show_move_summary(current, target, expected_seconds, move_timeout)
-            self._require_yes("Ready to move? [y/N] ")
+            self._require_yes("Begin movement? [y/N] ")
 
             step: dict[str, Any] = {
                 "step": step_number,
@@ -247,6 +248,7 @@ class HardwareTestRunner:
                         tilt=target.tilt,
                         move_timeout=move_timeout,
                     ),
+                    target=target,
                 )
                 final_position = self.turntable.current_position()
                 if self.turntable.current_state() is not TurntableState.STOPPED:
@@ -282,7 +284,12 @@ class HardwareTestRunner:
         console.print(f"Expected completion by: {expected_at:%H:%M:%S}")
         console.print(f"Hard controller timeout at: {timeout_at:%H:%M:%S}")
 
-    def _run_traced_operation(self, operation: Callable[[], None]) -> None:
+    def _run_traced_operation(
+        self,
+        operation: Callable[[], None],
+        *,
+        target: PanTilt,
+    ) -> None:
         command_index = len(self.turntable.command_history())
         events = self.turntable.events()
         event_cursor = events[-1] if events else None
@@ -298,9 +305,9 @@ class HardwareTestRunner:
         worker.start()
         try:
             while worker.is_alive():
-                command_index, event_cursor, _ = self._drain_trace(command_index, event_cursor)
+                command_index, event_cursor, _ = self._drain_trace(command_index, event_cursor, target=target)
                 worker.join(timeout=0.05)
-            self._drain_trace(command_index, event_cursor, force_final_position=True)
+            self._drain_trace(command_index, event_cursor, target=target, force_final_position=True)
         except BaseException:
             try:
                 self.turntable.abort()
@@ -318,6 +325,7 @@ class HardwareTestRunner:
         command_index: int,
         event_cursor: ReceivedMessage | None,
         *,
+        target: PanTilt | None = None,
         force_final_position: bool = False,
     ) -> tuple[int, ReceivedMessage | None, tuple[ReceivedMessage, ...]]:
         commands = self.turntable.command_history()
@@ -332,12 +340,12 @@ class HardwareTestRunner:
                 if (event is not final_position_event or not force_final_position) and elapsed is not None and elapsed < POSITION_TRACE_INTERVAL_SECONDS:
                     continue
                 self._last_position_trace_at = event.timestamp
-            self._write_trace(self._format_event(event))
+            self._write_trace(self._format_event(event, target=target))
         if force_final_position and final_position_event is None:
             latest_position = next((event for event in reversed(events) if isinstance(event, ReceivedMessagePosition)), None)
             if latest_position is not None and latest_position.timestamp != self._last_position_trace_at:
                 self._last_position_trace_at = latest_position.timestamp
-                self._write_trace(self._format_event(latest_position))
+                self._write_trace(self._format_event(latest_position, target=target))
         return len(commands), events[-1] if events else event_cursor, new_events
 
     @staticmethod
@@ -356,7 +364,7 @@ class HardwareTestRunner:
         self.report["trace"].append(line)
         console.print(line, style="dim", markup=False)
 
-    def _format_event(self, event: ReceivedMessage) -> str:
+    def _format_event(self, event: ReceivedMessage, *, target: PanTilt | None = None) -> str:
         prefix = self._timestamp(event.timestamp)
         if isinstance(event, ReceivedMessageAcknowledgement):
             suffix = event.command if event.reason is None else f"{event.command}: {event.reason}"
@@ -364,7 +372,12 @@ class HardwareTestRunner:
         if isinstance(event, ReceivedMessagePosition):
             if event.pan is None or event.tilt is None:
                 return f"{prefix}  POS   invalid position payload"
-            return f"{prefix}  POS   pan={event.pan:.3f}°, tilt={event.tilt:.3f}°"
+            current = PanTilt(pan=event.pan, tilt=event.tilt)
+            current_text = self._format_precise_position(current)
+            if target is None:
+                return f"{prefix}  POS   {current_text}"
+            remaining = PanTilt(pan=target.pan - current.pan, tilt=target.tilt - current.tilt)
+            return f"{prefix}  POS   CURRENT: {current_text} REMAINING: {self._format_precise_position(remaining)}"
         if isinstance(event, ReceivedMessageVersion):
             return f"{prefix}  VER   {event.version}"
         if isinstance(event, ReceivedMessageCounter):
@@ -385,10 +398,10 @@ class HardwareTestRunner:
             try:
                 value = float(response)
             except ValueError:
-                self._attention(f"Enter a numeric {axis} value from {lower:.0f} through {upper:.0f}, or q to stop.")
+                self._attention(f"Enter a numeric {axis} value from {lower:+.0f} through {upper:+.0f}, or q to stop.")
                 continue
             if not math.isfinite(value) or not lower <= value <= upper:
-                self._attention(f"{axis} must be finite and from {lower:.0f} through {upper:.0f} degrees.")
+                self._attention(f"{axis} must be finite and from {lower:+.0f} through {upper:+.0f} degrees.")
                 continue
             return value
 
@@ -435,7 +448,7 @@ class HardwareTestRunner:
         pan_change = cls._nearest_int(target.pan - current.pan)
         tilt_change = cls._nearest_int(target.tilt - current.tilt)
         if pan_change:
-            movements.append(f"{'LEFT' if pan_change > 0 else 'RIGHT'} {abs(pan_change)}°")
+            movements.append(f"{'RIGHT' if pan_change > 0 else 'LEFT'} {abs(pan_change)}°")
         if tilt_change:
             movements.append(f"{'UP' if tilt_change > 0 else 'DOWN'} {abs(tilt_change)}°")
         if not movements:
@@ -458,7 +471,15 @@ class HardwareTestRunner:
 
     @staticmethod
     def _format_position(position: PanTilt) -> str:
-        return f"pan={HardwareTestRunner._nearest_int(position.pan)}°, tilt={HardwareTestRunner._nearest_int(position.tilt)}°"
+        pan = HardwareTestRunner._nearest_int(position.pan)
+        tilt = HardwareTestRunner._nearest_int(position.tilt)
+        return f"pan={pan:+d}°, tilt={tilt:+d}°"
+
+    @staticmethod
+    def _format_precise_position(position: PanTilt) -> str:
+        pan = 0.0 if abs(position.pan) < 0.0005 else position.pan
+        tilt = 0.0 if abs(position.tilt) < 0.0005 else position.tilt
+        return f"pan={pan:+.3f}°, tilt={tilt:+.3f}°"
 
     @staticmethod
     def _timestamp(timestamp: datetime.datetime) -> str:
@@ -488,6 +509,8 @@ def main(argv: list[str] | None = None) -> int:
     runner: HardwareTestRunner | None = None
     exit_code = 1
     try:
+        console.print("Basic functionality HWIL test", style="bold")
+        console.print("Trying to connect...", style="yellow")
         turntable = Turntable(port=args.port, publish=False) if args.port else Turntable.find(publish=False)
         runner = HardwareTestRunner(turntable)
         runner.run()

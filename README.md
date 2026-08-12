@@ -68,7 +68,7 @@ Pass `--port /dev/...` to select a serial port instead of auto-discovery, and
 `--report PATH` to choose the JSON result path. The test first checks position
 telemetry and the running firmware version. It then guides the operator through
 an interactive centering loop: each explicitly approved attempt declares the
-operator's estimated physical pan/tilt with SET and moves to `(0, 0)`. The loop
+operator's estimated physical pan/tilt with SET and moves to `(+0, +0)`. The loop
 continues until the operator confirms physical center.
 
 After centering, the test exercises small pan and tilt movements, returning to
@@ -77,6 +77,9 @@ timeout, command writes, acknowledgements, and position reports. The operator
 must approve each move and confirm its rounded physical result. Directions,
 targets, and confirmation prompts are rounded to the nearest degree; the
 subdued live position trace updates at about 3 Hz with three decimal places.
+Each movement trace line shows the current position and the remaining signed
+pan/tilt delta to the target. All operator-facing angles include an explicit
+`+` or `-` sign.
 Ctrl-C, a declined
 action, a controller failure, or normal completion all attempt an immediate
 stop before the connection closes. The generated JSON report records versions,

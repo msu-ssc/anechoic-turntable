@@ -18,7 +18,7 @@ physical zero:
 
 1. Enter the best available estimate of the current physical pan and tilt.
 2. Review the signs, target, estimated travel duration, and hard timeout.
-3. Explicitly approve SET of that estimate and the move to pan `0`, tilt `0`.
+3. Explicitly approve SET of that estimate and the move to pan `+0`, tilt `+0`.
 4. Confirm that the motion appeared correct and safe.
 5. Confirm whether the resulting physical position is actually centered.
 6. If it is not centered, enter the remaining observed offset and repeat.
@@ -27,8 +27,8 @@ The estimate is safety-critical: it determines the direction and distance of
 the following move. Do not guess when the physical orientation, coordinate
 signs, or clear travel path are uncertain.
 
-Once centered, the runner moves to pan `5`, tilt `0`; returns home; moves to pan
-`0`, tilt `5`; and returns home again. It asks for approval before every move
+Once centered, the runner moves to pan `+5`, tilt `+0`; returns home; moves to pan
+`+0`, tilt `+5`; and returns home again. It asks for approval before every move
 and physical confirmation afterward. Any negative result ends the test. Ctrl-C
 at any point requests an immediate stop. The runner also attempts a final stop
 on success, cancellation, or failure and writes a JSON report containing the
@@ -37,6 +37,9 @@ observed trace and results.
 Positions and movement amounts displayed for operator confirmation are rounded
 to the nearest degree. Exact command bytes remain visible in the subdued serial
 trace, whose position lines update at about 3 Hz with three decimal places.
+Movement position lines show both the current coordinates and the remaining
+signed pan/tilt delta to the target. All operator-facing angles include an
+explicit `+` or `-` sign.
 
 ## Quick Test Procedure
 Run through these commands before actually testing changes you made:
