@@ -110,3 +110,7 @@ Firmware will now detect if there is no movement and stop the motors.
 ## 3.5.1 — 2026-08-11
 
 Firmware will now properly update target-reached state.
+
+## 4.0.0 — 2026-08-12
+
+Changed the emergency stop character from 'p' to '%'.

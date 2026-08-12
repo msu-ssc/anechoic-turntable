@@ -1,6 +1,6 @@
 #ifndef FIRMWARE_VERSION_H
 #define FIRMWARE_VERSION_H
 
-#define FIRMWARE_VERSION "3.5.1"
+#define FIRMWARE_VERSION "4.0.0"
 
 #endif
