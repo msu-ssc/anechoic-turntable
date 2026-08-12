@@ -40,6 +40,7 @@ class FakeHardwareTurntable:
         self.abort_calls = 0
         self.abort_error = None
         self.abort_error_on_call = 1
+        self.confirm_calls = 0
         self.closed = False
 
     def abort(self):
@@ -59,6 +60,10 @@ class FakeHardwareTurntable:
 
     def current_state(self):
         return self.state
+
+    def confirm_position(self):
+        self.confirm_calls += 1
+        self.state = TurntableState.STOPPED
 
     def estimate_time(self, *, pan, tilt):
         return 1.0
@@ -84,7 +89,7 @@ class FakeHardwareTurntable:
     def move_to(self, *, pan, tilt, move_timeout=None):
         self.move_calls.append((pan, tilt, move_timeout))
         self._record_command("MOV", f"CMD:MOV:{pan:.3f},{tilt:.3f};".encode())
-        self.position = PanTilt(pan=20.5, tilt=0.0)
+        self.position = PanTilt(pan=5.5, tilt=0.0) if pan > 0 else PanTilt(pan=0.0, tilt=-5.5)
         self._record_position(self.position)
         self.state = TurntableState.MOVING
 
@@ -144,10 +149,12 @@ def test_hwil_runner_repeats_centering_then_runs_basic_movement_sequence(monkeyp
         table,
         [
             "y",  # preflight
+            "n",  # reported position is not physically correct
             "2",
             "-1",
             "y",  # approve first centering move
             "n",  # residual physical offset remains
+            "n",  # reported zero is not physically correct
             "0.5",
             "0.25",
             "y",  # approve second centering move
@@ -156,12 +163,18 @@ def test_hwil_runner_repeats_centering_then_runs_basic_movement_sequence(monkeyp
             "y",  # pan +5 approval and observation
             "y",
             "y",  # return home
-            "y",  # begin emergency-stop movement
-            "y",  # emergency stop appeared safe
             "y",
             "y",  # tilt +5
             "y",
             "y",  # return home
+            "y",  # begin emergency-stop movement
+            "y",  # emergency stop appeared safe
+            "y",  # begin final return home
+            "y",  # final home position confirmed
+            "y",  # begin tilt emergency-stop movement
+            "y",  # tilt emergency stop appeared safe
+            "y",  # begin second return home
+            "y",  # second home position confirmed
         ],
         monkeypatch,
     )
@@ -180,18 +193,26 @@ def test_hwil_runner_repeats_centering_then_runs_basic_movement_sequence(monkeyp
         (0.0, 0.0),
         (0.0, 5.0),
         (0.0, 0.0),
-        (90.0, 0.0),
+        (30.0, 0.0),
+        (0.0, 0.0),
+        (0.0, -30.0),
+        (0.0, 0.0),
     ]
-    assert table.abort_calls == 2
+    assert table.abort_calls == 3
     rendered = capsys.readouterr().out
     assert "Interactive centering" in rendered
     assert "b'CMD:MOV:5.000,0.000;'" in rendered
     assert "The turntable will move RIGHT 5°." in rendered
     assert "Did the motion complete, and is the current position pan=+5°, tilt=+0°? [y/N]" in rendered
     assert "PASS: Basic functionality HWIL test completed." in rendered
-    assert "Emergency-stop check" in rendered
-    assert report["emergency_stop"]["stop_position"]["pan"] > 20.0
-    assert report["emergency_stop"]["stop_sent"]
+    assert "Pan emergency-stop check" in rendered
+    assert "Tilt emergency-stop check" in rendered
+    assert report["emergency_stops"]["pan"]["stop_position"]["pan"] > 5.0
+    assert report["emergency_stops"]["pan"]["stop_sent"]
+    assert report["emergency_stops"]["pan"]["return_home"]["operator_confirmed"]
+    assert report["emergency_stops"]["tilt"]["stop_position"]["tilt"] < -5.0
+    assert report["emergency_stops"]["tilt"]["stop_sent"]
+    assert report["emergency_stops"]["tilt"]["return_home"]["operator_confirmed"]
 
 
 def test_declining_a_required_movement_cancels_and_stops(monkeypatch):
@@ -200,6 +221,7 @@ def test_declining_a_required_movement_cancels_and_stops(monkeypatch):
         table,
         [
             "y",  # preflight
+            "n",  # reported position is not correct
             "2",
             "-1",
             "y",  # approve centering
@@ -223,6 +245,7 @@ def test_rejecting_observed_motion_fails_and_stops_without_continuing(monkeypatc
         table,
         [
             "y",  # preflight
+            "n",  # reported position is not correct
             "2",
             "-1",
             "y",  # approve centering
@@ -247,11 +270,12 @@ def test_rejecting_observed_motion_fails_and_stops_without_continuing(monkeypatc
 def test_final_stop_failure_prevents_a_passing_result(monkeypatch):
     table = FakeHardwareTurntable()
     table.abort_error = OSError("serial link lost")
-    table.abort_error_on_call = 2
+    table.abort_error_on_call = 3
     runner = make_runner(
         table,
         [
             "y",  # preflight
+            "n",  # reported position is not correct
             "2",
             "-1",
             "y",  # approve centering
@@ -260,12 +284,18 @@ def test_final_stop_failure_prevents_a_passing_result(monkeypatch):
             "y",  # pan +5
             "y",
             "y",  # return home
-            "y",  # begin emergency-stop movement
-            "y",  # emergency stop appeared safe
             "y",
             "y",  # tilt +5
             "y",
             "y",  # return home
+            "y",  # begin emergency-stop movement
+            "y",  # emergency stop appeared safe
+            "y",  # begin final return home
+            "y",  # final home position confirmed
+            "y",  # begin tilt emergency-stop movement
+            "y",  # tilt emergency stop appeared safe
+            "y",  # begin second return home
+            "y",  # second home position confirmed
         ],
         monkeypatch,
     )
@@ -277,18 +307,62 @@ def test_final_stop_failure_prevents_a_passing_result(monkeypatch):
     assert runner.report["final_stop_error"] == "serial link lost"
 
 
-def test_emergency_stop_is_sent_after_pan_passes_twenty_degrees(monkeypatch):
+def test_emergency_stop_is_sent_after_pan_passes_five_degrees_then_returns_home(monkeypatch):
     table = FakeHardwareTurntable()
-    runner = make_runner(table, ["y", "y"], monkeypatch)
+    runner = make_runner(table, ["y", "y", "y", "y"], monkeypatch)
     table.position = PanTilt(pan=0.0, tilt=0.0)
     table.state = TurntableState.STOPPED
 
-    runner._run_emergency_stop_test()
+    runner.report["emergency_stops"] = {}
+    runner._run_axis_emergency_stop_test(
+        axis="pan",
+        target=PanTilt(pan=30.0, tilt=0.0),
+        abort_position=PanTilt(pan=5.0, tilt=0.0),
+    )
 
-    assert table.move_calls[-1][0:2] == (90.0, 0.0)
-    assert runner.report["emergency_stop"]["stop_position"]["pan"] == 20.5
-    assert runner.report["emergency_stop"]["stop_sent"]
+    assert table.move_calls[-2][0:2] == (30.0, 0.0)
+    assert table.move_calls[-1][0:2] == (0.0, 0.0)
+    assert runner.report["emergency_stops"]["pan"]["stop_position"]["pan"] == 5.5
+    assert runner.report["emergency_stops"]["pan"]["stop_sent"]
+    assert runner.report["emergency_stops"]["pan"]["return_home"]["operator_confirmed"]
     assert table.abort_calls == 1
+    assert any("REMAINING_UNTIL_ABORT: pan=-0.500°" in line for line in runner.report["trace"])
+
+
+def test_correct_reported_position_skips_set_but_still_goes_home(monkeypatch):
+    table = FakeHardwareTurntable()
+    table.position = PanTilt(pan=3.0, tilt=-2.0)
+    runner = make_runner(table, ["y", "y", "y"], monkeypatch)
+
+    runner._center_interactively()
+
+    assert table.confirm_calls == 1
+    assert table.set_calls == []
+    assert [(pan, tilt) for pan, tilt, _timeout in table.move_calls] == [(0.0, 0.0)]
+    assert runner.report["position_confirmation"]["position"] == {"pan": 3.0, "tilt": -2.0}
+    assert runner.report["position_confirmation"]["operator_confirmed_centered"]
+
+
+def test_tilt_emergency_stop_is_sent_after_tilt_passes_negative_five_then_returns_home(monkeypatch):
+    table = FakeHardwareTurntable()
+    runner = make_runner(table, ["y", "y", "y", "y"], monkeypatch)
+    table.position = PanTilt(pan=0.0, tilt=0.0)
+    table.state = TurntableState.STOPPED
+    runner.report["emergency_stops"] = {}
+
+    runner._run_axis_emergency_stop_test(
+        axis="tilt",
+        target=PanTilt(pan=0.0, tilt=-30.0),
+        abort_position=PanTilt(pan=0.0, tilt=-5.0),
+    )
+
+    assert table.move_calls[-2][0:2] == (0.0, -30.0)
+    assert table.move_calls[-1][0:2] == (0.0, 0.0)
+    assert runner.report["emergency_stops"]["tilt"]["stop_position"]["tilt"] == -5.5
+    assert runner.report["emergency_stops"]["tilt"]["stop_sent"]
+    assert runner.report["emergency_stops"]["tilt"]["return_home"]["operator_confirmed"]
+    assert table.abort_calls == 1
+    assert any("REMAINING_UNTIL_ABORT: tilt=+0.500°" in line for line in runner.report["trace"])
 
 
 def test_operator_movement_text_uses_directions_and_rounded_degrees():
@@ -321,6 +395,7 @@ def test_trace_continues_after_event_history_reaches_capacity(monkeypatch):
         table,
         [
             "y",  # preflight
+            "n",  # reported position is not correct
             "2",
             "-1",
             "y",  # approve centering

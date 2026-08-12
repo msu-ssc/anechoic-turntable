@@ -67,7 +67,9 @@ uv run anechoic-turntable-hwil-basic
 Pass `--port /dev/...` to select a serial port instead of auto-discovery, and
 `--report PATH` to choose the JSON result path. The test first checks position
 telemetry and the running firmware version. It then guides the operator through
-an interactive centering loop: each explicitly approved attempt declares the
+an interactive centering loop. The operator may confirm an already-correct
+reported position without sending SET; the runner still performs the approved
+go-home movement. Otherwise, each approved attempt declares the
 operator's estimated physical pan/tilt with SET and moves to `(+0, +0)`. The loop
 continues until the operator confirms physical center.
 
@@ -85,9 +87,13 @@ action, a controller failure, or normal completion all attempt an immediate
 stop before the connection closes. The generated JSON report records versions,
 centering attempts, results, confirmations, and the serial trace.
 
-The final check starts from home, commands pan `+90°`, and automatically sends
-the emergency stop as soon as reported pan passes `+20°`. The operator then
-confirms that the physical stop was immediate and safe.
+The final checks start from home. The first commands pan `+30°` and automatically sends
+the emergency stop as soon as reported pan passes `+5°`. Its live trace shows
+pan remaining until the abort threshold rather than pan remaining to the
+commanded target. After the operator confirms that the stop was immediate and
+safe, an operator-approved movement returns the table home. The second check
+commands tilt `-30°`, stops after reported tilt passes `-5°`, receives the same
+operator confirmation, and returns home again.
 
 This is supervised physical-equipment testing, not part of the normal `pytest`
 suite. Follow the safety guidance in [Hardware test procedures](docs/test_procedures.md)

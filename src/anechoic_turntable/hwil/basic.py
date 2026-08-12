@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from typing import Literal
 
 from rich.console import Console
 
@@ -77,7 +78,7 @@ class HardwareTestRunner:
             self._run_preflight()
             self._center_interactively()
             self._run_basic_movements()
-            self._run_emergency_stop_test()
+            self._run_emergency_stop_tests()
         except OperatorCancelled:
             self.report["status"] = "cancelled"
             raise
@@ -162,6 +163,42 @@ class HardwareTestRunner:
         while True:
             attempt_number += 1
             console.print(f"\nCentering attempt {attempt_number}", style="bold")
+            reported_position = self.turntable.current_position()
+            if reported_position is None:
+                raise HardwareTestError("current reported position is unavailable during centering")
+            self._attention(f"Current reported position: {self._format_position(reported_position)}")
+            if self._ask_yes_no("Is this position correct? [y/N] "):
+                self.turntable.confirm_position()
+                confirmation: dict[str, Any] = {
+                    "position": {"pan": reported_position.pan, "tilt": reported_position.tilt},
+                    "confirmed_at": datetime.datetime.now().astimezone().isoformat(),
+                }
+                self.report["position_confirmation"] = confirmation
+                console.print("Reported position confirmed; SET skipped.", style="green")
+                target = PanTilt(pan=0.0, tilt=0.0)
+                estimated_seconds = self.turntable.estimate_time(pan=target.pan, tilt=target.tilt)
+                move_timeout = self._move_timeout(estimated_seconds)
+                self._show_move_summary(reported_position, target, estimated_seconds, move_timeout)
+                self._require_yes("Begin movement? [y/N] ")
+                self._run_traced_operation(
+                    lambda target=target, move_timeout=move_timeout: self.turntable.move_to_blocking(
+                        pan=target.pan,
+                        tilt=target.tilt,
+                        move_timeout=move_timeout,
+                    ),
+                    target=target,
+                )
+                final_position = self.turntable.current_position()
+                if self.turntable.current_state() is not TurntableState.STOPPED or final_position is None:
+                    raise HardwareTestError("turntable did not stop after the confirmed-position go-home move")
+                confirmation["final_position"] = {"pan": final_position.pan, "tilt": final_position.tilt}
+                physically_centered = self._ask_yes_no(self._confirmation_prompt(target))
+                confirmation["operator_confirmed_centered"] = physically_centered
+                if physically_centered:
+                    console.print("Center established.", style="green")
+                    return
+                self._attention("The table remains stopped. Enter the observed residual offset for another centering attempt.")
+                continue
             pan = self._read_coordinate("Approximate current pan in degrees: ", axis="pan")
             tilt = self._read_coordinate("Approximate current tilt in degrees: ", axis="tilt")
             estimated_seconds = estimate_movement_time(
@@ -270,25 +307,45 @@ class HardwareTestRunner:
             if not operator_confirmed:
                 raise HardwareTestError(f"operator rejected the physical result of step {step_number}")
 
-    def _run_emergency_stop_test(self) -> None:
+    def _run_emergency_stop_tests(self) -> None:
+        self.report["emergency_stops"] = {}
+        self._run_axis_emergency_stop_test(
+            axis="pan",
+            target=PanTilt(pan=30.0, tilt=0.0),
+            abort_position=PanTilt(pan=5.0, tilt=0.0),
+        )
+        self._run_axis_emergency_stop_test(
+            axis="tilt",
+            target=PanTilt(pan=0.0, tilt=-30.0),
+            abort_position=PanTilt(pan=0.0, tilt=-5.0),
+        )
+
+    def _run_axis_emergency_stop_test(
+        self,
+        *,
+        axis: Literal["pan", "tilt"],
+        target: PanTilt,
+        abort_position: PanTilt,
+    ) -> None:
         current = self.turntable.current_position()
         if current is None or abs(current.pan) > ALLOWABLE_DISCREPANCY_DEG or abs(current.tilt) > ALLOWABLE_DISCREPANCY_DEG:
             raise HardwareTestError("emergency-stop test must start at pan=+0°, tilt=+0°")
 
-        target = PanTilt(pan=90.0, tilt=0.0)
+        threshold = abort_position.pan if axis == "pan" else abort_position.tilt
         estimated_seconds = self.turntable.estimate_time(pan=target.pan, tilt=target.tilt)
         move_timeout = self._move_timeout(estimated_seconds)
-        console.print("\nEmergency-stop check", style="bold")
-        self._attention("This test will begin a long movement and automatically issue an emergency stop after pan passes +20°.")
+        console.print(f"\n{axis.capitalize()} emergency-stop check", style="bold")
+        self._attention(f"This test will begin a movement and automatically issue an emergency stop after {axis} passes {self._format_precise_angle(threshold)}.")
         self._show_move_summary(current, target, estimated_seconds, move_timeout)
         self._require_yes("Begin movement? [y/N] ")
 
         result: dict[str, Any] = {
+            "axis": axis,
             "target": {"pan": target.pan, "tilt": target.tilt},
-            "stop_threshold_pan": 20.0,
+            "stop_threshold": threshold,
             "started_at": datetime.datetime.now().astimezone().isoformat(),
         }
-        self.report["emergency_stop"] = result
+        self.report["emergency_stops"][axis] = result
         command_index = len(self.turntable.command_history())
         events = self.turntable.events()
         event_cursor = events[-1] if events else None
@@ -297,20 +354,35 @@ class HardwareTestRunner:
         try:
             self.turntable.move_to(pan=target.pan, tilt=target.tilt, move_timeout=move_timeout)
             while True:
-                command_index, event_cursor, _ = self._drain_trace(command_index, event_cursor, target=target)
+                command_index, event_cursor, _ = self._drain_trace(
+                    command_index,
+                    event_cursor,
+                    target=abort_position,
+                    remaining_label="REMAINING_UNTIL_ABORT",
+                    remaining_axis=axis,
+                )
                 position = self.turntable.current_position()
-                if position is not None and position.pan > 20.0:
+                axis_position = None if position is None else (position.pan if axis == "pan" else position.tilt)
+                threshold_crossed = axis_position is not None and (axis_position > threshold if threshold > 0 else axis_position < threshold)
+                if position is not None and threshold_crossed:
                     result["stop_position"] = {"pan": position.pan, "tilt": position.tilt}
                     result["threshold_crossed_at"] = datetime.datetime.now().astimezone().isoformat()
                     self.turntable.abort()
                     result["stop_sent"] = True
-                    self._drain_trace(command_index, event_cursor, target=target, force_final_position=True)
+                    self._drain_trace(
+                        command_index,
+                        event_cursor,
+                        target=abort_position,
+                        remaining_label="REMAINING_UNTIL_ABORT",
+                        remaining_axis=axis,
+                        force_final_position=True,
+                    )
                     break
                 error = self.turntable.last_error()
                 if error is not None:
                     raise HardwareTestError(f"controller reported an error before the emergency stop: {error}")
                 if time.monotonic() >= deadline:
-                    raise HardwareTestError("pan did not pass +20° before the emergency-stop test timed out")
+                    raise HardwareTestError(f"{axis} did not pass {self._format_precise_angle(threshold)} before the emergency-stop test timed out")
                 time.sleep(0.01)
         except BaseException as exc:
             result["machine_result"] = "failed"
@@ -326,6 +398,44 @@ class HardwareTestRunner:
         result["operator_confirmed"] = operator_confirmed
         if not operator_confirmed:
             raise HardwareTestError("operator rejected the emergency-stop result")
+        self._return_home_after_emergency_stop(result, axis=axis)
+
+    def _return_home_after_emergency_stop(self, emergency_stop_result: dict[str, Any], *, axis: Literal["pan", "tilt"]) -> None:
+        current = self.turntable.current_position()
+        if current is None:
+            raise HardwareTestError("current position is unavailable after the emergency stop")
+        target = PanTilt(pan=0.0, tilt=0.0)
+        estimated_seconds = self.turntable.estimate_time(pan=target.pan, tilt=target.tilt)
+        move_timeout = self._move_timeout(estimated_seconds)
+        console.print(f"\nGo back home after {axis} emergency stop", style="bold")
+        self._show_move_summary(current, target, estimated_seconds, move_timeout)
+        self._require_yes("Begin movement? [y/N] ")
+
+        return_home: dict[str, Any] = {
+            "started_at": datetime.datetime.now().astimezone().isoformat(),
+            "target": {"pan": target.pan, "tilt": target.tilt},
+        }
+        emergency_stop_result["return_home"] = return_home
+        try:
+            self._run_traced_operation(
+                lambda: self.turntable.move_to_blocking(pan=target.pan, tilt=target.tilt, move_timeout=move_timeout),
+                target=target,
+            )
+            final_position = self.turntable.current_position()
+            if self.turntable.current_state() is not TurntableState.STOPPED or final_position is None:
+                raise HardwareTestError("turntable did not stop at home after the emergency-stop test")
+        except BaseException as exc:
+            return_home["machine_result"] = "failed"
+            return_home["error"] = str(exc)
+            raise
+
+        return_home["machine_result"] = "passed"
+        return_home["final_position"] = {"pan": final_position.pan, "tilt": final_position.tilt}
+        return_home["finished_at"] = datetime.datetime.now().astimezone().isoformat()
+        operator_confirmed = self._ask_yes_no(self._confirmation_prompt(target))
+        return_home["operator_confirmed"] = operator_confirmed
+        if not operator_confirmed:
+            raise HardwareTestError("operator rejected the final home position")
 
     def _show_move_summary(
         self,
@@ -385,6 +495,8 @@ class HardwareTestRunner:
         event_cursor: ReceivedMessage | None,
         *,
         target: PanTilt | None = None,
+        remaining_label: str = "REMAINING",
+        remaining_axis: Literal["pan", "tilt"] | None = None,
         force_final_position: bool = False,
     ) -> tuple[int, ReceivedMessage | None, tuple[ReceivedMessage, ...]]:
         commands = self.turntable.command_history()
@@ -399,12 +511,26 @@ class HardwareTestRunner:
                 if (event is not final_position_event or not force_final_position) and elapsed is not None and elapsed < POSITION_TRACE_INTERVAL_SECONDS:
                     continue
                 self._last_position_trace_at = event.timestamp
-            self._write_trace(self._format_event(event, target=target))
+            self._write_trace(
+                self._format_event(
+                    event,
+                    target=target,
+                    remaining_label=remaining_label,
+                    remaining_axis=remaining_axis,
+                )
+            )
         if force_final_position and final_position_event is None:
             latest_position = next((event for event in reversed(events) if isinstance(event, ReceivedMessagePosition)), None)
             if latest_position is not None and latest_position.timestamp != self._last_position_trace_at:
                 self._last_position_trace_at = latest_position.timestamp
-                self._write_trace(self._format_event(latest_position, target=target))
+                self._write_trace(
+                    self._format_event(
+                        latest_position,
+                        target=target,
+                        remaining_label=remaining_label,
+                        remaining_axis=remaining_axis,
+                    )
+                )
         return len(commands), events[-1] if events else event_cursor, new_events
 
     @staticmethod
@@ -421,9 +547,16 @@ class HardwareTestRunner:
 
     def _write_trace(self, line: str) -> None:
         self.report["trace"].append(line)
-        console.print(line, style="dim", markup=False)
+        console.print(line, style="dim", markup=False, soft_wrap=True)
 
-    def _format_event(self, event: ReceivedMessage, *, target: PanTilt | None = None) -> str:
+    def _format_event(
+        self,
+        event: ReceivedMessage,
+        *,
+        target: PanTilt | None = None,
+        remaining_label: str = "REMAINING",
+        remaining_axis: Literal["pan", "tilt"] | None = None,
+    ) -> str:
         prefix = self._timestamp(event.timestamp)
         if isinstance(event, ReceivedMessageAcknowledgement):
             suffix = event.command if event.reason is None else f"{event.command}: {event.reason}"
@@ -436,7 +569,11 @@ class HardwareTestRunner:
             if target is None:
                 return f"{prefix}  POS   {current_text}"
             remaining = PanTilt(pan=target.pan - current.pan, tilt=target.tilt - current.tilt)
-            return f"{prefix}  POS   CURRENT: {current_text} REMAINING: {self._format_precise_position(remaining)}"
+            if remaining_axis is None:
+                remaining_text = self._format_precise_position(remaining)
+            else:
+                remaining_text = f"{remaining_axis}={self._format_precise_angle(getattr(remaining, remaining_axis))}"
+            return f"{prefix}  POS   CURRENT: {current_text} {remaining_label}: {remaining_text}"
         if isinstance(event, ReceivedMessageVersion):
             return f"{prefix}  VER   {event.version}"
         if isinstance(event, ReceivedMessageCounter):
@@ -536,9 +673,12 @@ class HardwareTestRunner:
 
     @staticmethod
     def _format_precise_position(position: PanTilt) -> str:
-        pan = 0.0 if abs(position.pan) < 0.0005 else position.pan
-        tilt = 0.0 if abs(position.tilt) < 0.0005 else position.tilt
-        return f"pan={pan:+.3f}°, tilt={tilt:+.3f}°"
+        return f"pan={HardwareTestRunner._format_precise_angle(position.pan)}, tilt={HardwareTestRunner._format_precise_angle(position.tilt)}"
+
+    @staticmethod
+    def _format_precise_angle(angle: float) -> str:
+        angle = 0.0 if abs(angle) < 0.0005 else angle
+        return f"{angle:+.3f}°"
 
     @staticmethod
     def _timestamp(timestamp: datetime.datetime) -> str:

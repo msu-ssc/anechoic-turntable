@@ -16,10 +16,13 @@ The runner checks communication and firmware-version reporting before allowing
 motion. It then repeats this centering procedure until the operator confirms
 physical zero:
 
-1. Enter the best available estimate of the current physical pan and tilt.
-2. Review the signs, target, estimated travel duration, and hard timeout.
-3. Explicitly approve SET of that estimate and the move to pan `+0`, tilt `+0`.
-4. Confirm that the motion appeared correct and safe.
+1. Review the current reported position and confirm it if it is physically
+   correct. Confirmation uses the controller's no-command `confirm_position()`
+   operation and skips SET, but still performs the go-home movement.
+2. Otherwise, enter the best available estimate of the current physical pan
+   and tilt.
+3. Review the signs, target, estimated travel duration, and hard timeout.
+4. Explicitly approve SET of that estimate and the move to pan `+0`, tilt `+0`.
 5. Confirm whether the resulting physical position is actually centered.
 6. If it is not centered, enter the remaining observed offset and repeat.
 
@@ -41,9 +44,13 @@ Movement position lines show both the current coordinates and the remaining
 signed pan/tilt delta to the target. All operator-facing angles include an
 explicit `+` or `-` sign.
 
-The final check starts at pan `+0°`, tilt `+0°`, commands a move to pan `+90°`,
-and sends the emergency stop as soon as reported pan passes `+20°`. The
-operator must confirm that the physical stop was immediate and safe.
+The first emergency-stop check starts at pan `+0°`, tilt `+0°`, commands a move to pan `+30°`,
+and sends the emergency stop as soon as reported pan passes `+5°`. The live
+remaining value is measured to that abort threshold. The operator must confirm
+that the physical stop was immediate and safe, then approve and confirm a
+return home. The second check commands tilt `-30°`, sends the emergency stop
+after reported tilt passes `-5°`, and again requires physical confirmation and
+a confirmed return home.
 
 ## Quick Test Procedure
 Run through these commands before actually testing changes you made:
