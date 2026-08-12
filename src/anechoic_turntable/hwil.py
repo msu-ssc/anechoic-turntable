@@ -34,6 +34,7 @@ from anechoic_turntable.positions import PanTilt
 from anechoic_turntable.turntable import Turntable
 
 console = Console(highlight=False)
+POSITION_TRACE_INTERVAL_SECONDS = 1.0 / 3.0
 
 
 class HardwareTestError(RuntimeError):
@@ -49,6 +50,7 @@ class HardwareTestRunner:
 
     def __init__(self, turntable: Turntable) -> None:
         self.turntable = turntable
+        self._last_position_trace_at: datetime.datetime | None = None
         self.report: dict[str, Any] = {
             "status": "not_started",
             "started_at": datetime.datetime.now().astimezone().isoformat(),
@@ -113,28 +115,27 @@ class HardwareTestRunner:
         assert initial_position is not None
         console.print(f"Position telemetry received: {self._format_position(initial_position)}")
 
-        event_index = len(self.turntable.events())
-        request_event_index = event_index
+        events = self.turntable.events()
+        event_cursor = events[-1] if events else None
         command_index = len(self.turntable.command_history())
         self.turntable.request_version()
         version_deadline = time.monotonic() + 2.0
         firmware_version: str | None = None
         version_acknowledged = False
         while time.monotonic() < version_deadline:
-            command_index, event_index = self._drain_trace(command_index, event_index)
-            request_events = self.turntable.events()[request_event_index:]
-            version_events = [event for event in request_events if isinstance(event, ReceivedMessageVersion)]
+            command_index, event_cursor, new_events = self._drain_trace(command_index, event_cursor)
+            version_events = [event for event in new_events if isinstance(event, ReceivedMessageVersion)]
             if version_events:
                 firmware_version = version_events[-1].version
-            version_acknowledged = any(isinstance(event, ReceivedMessageAcknowledgement) and event.status == "ACK" and event.command == "VERSION" for event in request_events)
+            version_acknowledged = version_acknowledged or any(isinstance(event, ReceivedMessageAcknowledgement) and event.status == "ACK" and event.command == "VERSION" for event in new_events)
             if firmware_version is not None and version_acknowledged:
                 break
             error = self.turntable.last_error()
             if error is not None:
                 raise HardwareTestError(f"firmware version request failed: {error}")
             time.sleep(0.05)
-        command_index, event_index = self._drain_trace(command_index, event_index)
-        del command_index, event_index
+        command_index, event_cursor, new_events = self._drain_trace(command_index, event_cursor)
+        del command_index, event_cursor, new_events
         if firmware_version is None or not version_acknowledged:
             raise HardwareTestError("firmware did not acknowledge and answer the version request within 2 seconds")
         self.report["firmware_version"] = firmware_version
@@ -283,7 +284,8 @@ class HardwareTestRunner:
 
     def _run_traced_operation(self, operation: Callable[[], None]) -> None:
         command_index = len(self.turntable.command_history())
-        event_index = len(self.turntable.events())
+        events = self.turntable.events()
+        event_cursor = events[-1] if events else None
         outcome: dict[str, BaseException | None] = {"error": None}
 
         def run_operation() -> None:
@@ -296,9 +298,9 @@ class HardwareTestRunner:
         worker.start()
         try:
             while worker.is_alive():
-                command_index, event_index = self._drain_trace(command_index, event_index)
+                command_index, event_cursor, _ = self._drain_trace(command_index, event_cursor)
                 worker.join(timeout=0.05)
-            self._drain_trace(command_index, event_index)
+            self._drain_trace(command_index, event_cursor, force_final_position=True)
         except BaseException:
             try:
                 self.turntable.abort()
@@ -311,14 +313,44 @@ class HardwareTestRunner:
         if outcome["error"] is not None:
             raise outcome["error"]
 
-    def _drain_trace(self, command_index: int, event_index: int) -> tuple[int, int]:
+    def _drain_trace(
+        self,
+        command_index: int,
+        event_cursor: ReceivedMessage | None,
+        *,
+        force_final_position: bool = False,
+    ) -> tuple[int, ReceivedMessage | None, tuple[ReceivedMessage, ...]]:
         commands = self.turntable.command_history()
         events = self.turntable.events()
+        new_events = self._events_after(events, event_cursor)
+        final_position_event = next((event for event in reversed(new_events) if isinstance(event, ReceivedMessagePosition)), None)
         for command in commands[command_index:]:
             self._write_trace(f"{self._timestamp(command.timestamp)}  TX    {command.command!r}")
-        for event in events[event_index:]:
+        for event in new_events:
+            if isinstance(event, ReceivedMessagePosition):
+                elapsed = None if self._last_position_trace_at is None else (event.timestamp - self._last_position_trace_at).total_seconds()
+                if (event is not final_position_event or not force_final_position) and elapsed is not None and elapsed < POSITION_TRACE_INTERVAL_SECONDS:
+                    continue
+                self._last_position_trace_at = event.timestamp
             self._write_trace(self._format_event(event))
-        return len(commands), len(events)
+        if force_final_position and final_position_event is None:
+            latest_position = next((event for event in reversed(events) if isinstance(event, ReceivedMessagePosition)), None)
+            if latest_position is not None and latest_position.timestamp != self._last_position_trace_at:
+                self._last_position_trace_at = latest_position.timestamp
+                self._write_trace(self._format_event(latest_position))
+        return len(commands), events[-1] if events else event_cursor, new_events
+
+    @staticmethod
+    def _events_after(
+        events: tuple[ReceivedMessage, ...],
+        cursor: ReceivedMessage | None,
+    ) -> tuple[ReceivedMessage, ...]:
+        if cursor is None:
+            return events
+        for index in range(len(events) - 1, -1, -1):
+            if events[index] is cursor:
+                return events[index + 1 :]
+        return events
 
     def _write_trace(self, line: str) -> None:
         self.report["trace"].append(line)
@@ -332,7 +364,7 @@ class HardwareTestRunner:
         if isinstance(event, ReceivedMessagePosition):
             if event.pan is None or event.tilt is None:
                 return f"{prefix}  POS   invalid position payload"
-            return f"{prefix}  POS   {self._format_position(PanTilt(pan=event.pan, tilt=event.tilt))}"
+            return f"{prefix}  POS   pan={event.pan:.3f}°, tilt={event.tilt:.3f}°"
         if isinstance(event, ReceivedMessageVersion):
             return f"{prefix}  VER   {event.version}"
         if isinstance(event, ReceivedMessageCounter):

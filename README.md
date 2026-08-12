@@ -74,8 +74,10 @@ continues until the operator confirms physical center.
 After centering, the test exercises small pan and tilt movements, returning to
 home after each axis. Every move displays its target, estimated duration, hard
 timeout, command writes, acknowledgements, and position reports. The operator
-must approve each move and confirm its rounded physical result. Values shown to
-the operator are rounded to the nearest degree. Ctrl-C, a declined
+must approve each move and confirm its rounded physical result. Directions,
+targets, and confirmation prompts are rounded to the nearest degree; the
+subdued live position trace updates at about 3 Hz with three decimal places.
+Ctrl-C, a declined
 action, a controller failure, or normal completion all attempt an immediate
 stop before the connection closes. The generated JSON report records versions,
 centering attempts, results, confirmations, and the serial trace.

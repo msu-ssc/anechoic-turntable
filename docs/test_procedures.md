@@ -36,7 +36,7 @@ observed trace and results.
 
 Positions and movement amounts displayed for operator confirmation are rounded
 to the nearest degree. Exact command bytes remain visible in the subdued serial
-trace.
+trace, whose position lines update at about 3 Hz with three decimal places.
 
 ## Quick Test Procedure
 Run through these commands before actually testing changes you made:

@@ -1,4 +1,5 @@
 import datetime
+from collections import deque
 
 import pytest
 
@@ -20,14 +21,17 @@ class FakeHardwareTurntable:
 
     def __init__(self):
         self._commands = []
-        self._events = [
-            ReceivedMessagePosition(
-                message=b"MSG:POS:PAN=2.000,TILT=-1.000\r\n",
-                timestamp=TEST_TIME,
-                pan=2.0,
-                tilt=-1.0,
-            )
-        ]
+        self._events = deque(
+            [
+                ReceivedMessagePosition(
+                    message=b"MSG:POS:PAN=2.000,TILT=-1.000\r\n",
+                    timestamp=TEST_TIME,
+                    pan=2.0,
+                    tilt=-1.0,
+                )
+            ],
+            maxlen=1_000,
+        )
         self.position = PanTilt(pan=2.0, tilt=-1.0)
         self.state = TurntableState.NOT_SET
         self.set_calls = []
@@ -260,6 +264,56 @@ def test_operator_movement_text_uses_directions_and_rounded_degrees():
 
     assert HardwareTestRunner._movement_description(current, target) == "The turntable will move LEFT 5° and DOWN 10°."
     assert HardwareTestRunner._confirmation_prompt(target) == "Did the motion complete, and is the current position pan=-15°, tilt=5°? [y/N] "
+
+
+def test_trace_continues_after_event_history_reaches_capacity(monkeypatch):
+    table = FakeHardwareTurntable()
+    initial_event = table._events[-1]
+    table._events.extend(initial_event for _ in range(table._events.maxlen - len(table._events)))
+    runner = make_runner(
+        table,
+        [
+            "y",  # preflight
+            "2",
+            "-1",
+            "y",  # approve centering
+            "y",  # centered
+            "n",  # stop before the basic movement checks
+        ],
+        monkeypatch,
+    )
+
+    with pytest.raises(OperatorCancelled):
+        runner.run()
+
+    trace = runner.report["trace"]
+    assert any("ACK   VERSION" in line for line in trace)
+    assert any("ACK   SET" in line for line in trace)
+    assert any("ACK   MOV" in line for line in trace)
+    assert any("POS" in line for line in trace)
+
+
+def test_position_trace_is_limited_to_about_three_hz_with_three_decimal_places():
+    table = FakeHardwareTurntable()
+    table._events.clear()
+    for milliseconds, pan in ((0, 1.234), (100, 1.5), (340, 2.345), (500, 2.8), (680, 3.456)):
+        table._events.append(
+            ReceivedMessagePosition(
+                message=b"position",
+                timestamp=TEST_TIME + datetime.timedelta(milliseconds=milliseconds),
+                pan=pan,
+                tilt=-0.125,
+            )
+        )
+    runner = HardwareTestRunner(table)
+
+    runner._drain_trace(0, None)
+
+    position_lines = [line for line in runner.report["trace"] if " POS " in line]
+    assert len(position_lines) == 3
+    assert "pan=1.234°, tilt=-0.125°" in position_lines[0]
+    assert "pan=2.345°, tilt=-0.125°" in position_lines[1]
+    assert "pan=3.456°, tilt=-0.125°" in position_lines[2]
 
 
 @pytest.mark.parametrize(
